@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.core.LinearEasing
@@ -46,6 +48,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +72,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.suitanglu.app.AppGraph
@@ -76,6 +81,8 @@ import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.data.db.Recording
 import com.suitanglu.app.service.RecordingBus
 import com.suitanglu.app.service.RecordingService
+import com.suitanglu.app.ui.theme.recordColors
+import com.suitanglu.app.ui.theme.tabularNumbers
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -103,6 +110,8 @@ fun HomeScreen(
         RecordingBus.state.map { it != null }.distinctUntilChanged()
     }.collectAsState(initial = RecordingBus.state.value != null)
     val recoveredCount by container.recordingRepository.recoveredCount.collectAsState()
+    val courses by vm.courses.collectAsState()
+    val courseFilter by vm.courseFilter.collectAsState()
 
     LaunchedEffect(recoveredCount) {
         recoveredCount?.let {
@@ -175,16 +184,7 @@ fun HomeScreen(
                 )
             } else {
                 TopAppBar(
-                    title = {
-                        Column {
-                            Text("随堂录", style = MaterialTheme.typography.titleLarge)
-                            Text(
-                                "课堂录音 · 拍照标记 · AI 讲解",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    },
+                    title = { Text("随堂录", style = MaterialTheme.typography.titleLarge) },
                     actions = {
                         IconButton(onClick = onOpenRecycle) {
                             Icon(Icons.Filled.Delete, contentDescription = "回收站")
@@ -233,7 +233,57 @@ fun HomeScreen(
                     )
                 }
             }
-            if (sections.isEmpty()) {
+            // 课程筛选：只列出真正出现过的课程，避免空课程占位
+            if (courses.isNotEmpty()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = courseFilter == null,
+                        onClick = { vm.setCourseFilter(null) },
+                        label = { Text("全部") },
+                    )
+                    courses.forEach { course ->
+                        val active = courseFilter == course
+                        FilterChip(
+                            selected = active,
+                            // 再点一次已选中的课程 = 取消筛选，省一次回「全部」
+                            onClick = { vm.setCourseFilter(if (active) null else course) },
+                            label = { Text(course, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingIcon = {
+                                Box(
+                                    Modifier
+                                        .size(8.dp)
+                                        .background(courseColor(course) ?: Color.Transparent, CircleShape),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            if (sections.isEmpty() && courseFilter != null) {
+                // 该课程下暂时没有录音：给一个退出口，而不是复用全局空状态
+                Column(
+                    Modifier.fillMaxSize().padding(32.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("「$courseFilter」下没有录音", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "换一门课，或查看全部录音。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(onClick = { vm.setCourseFilter(null) }) { Text("查看全部") }
+                }
+            } else if (sections.isEmpty()) {
                 Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     verticalArrangement = Arrangement.Center,
@@ -241,24 +291,25 @@ fun HomeScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(96.dp)
-                            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                            .size(84.dp)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Outlined.Audiotrack,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(44.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(36.dp),
                         )
                     }
-                    Spacer(Modifier.height(20.dp))
-                    Text("还没有录音", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(24.dp))
+                    Text("还没有录音", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        "点击「开始录音」，上课时拍照标记，\n录音结束 AI 自动讲解",
+                        "上课时点「开始录音」，遇到重点拍照标记。\n录音结束后会自动把图片发给 AI 讲解。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 24.dp),
                     )
                 }
@@ -269,19 +320,19 @@ fun HomeScreen(
                             Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surface)
-                                    .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                                    .background(MaterialTheme.colorScheme.background)
+                                    .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+                                verticalAlignment = Alignment.Bottom,
                             ) {
                                 Text(
                                     section.label,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f),
                                 )
                                 Text(
                                     "${section.items.size} 条",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    style = MaterialTheme.typography.labelMedium.tabularNumbers(),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -425,17 +476,14 @@ private fun RecordingCard(
     val rec = item.recording
     val isRecording = rec.status == Recording.STATUS_RECORDING
     val audioDeleted = rec.status == Recording.STATUS_AUDIO_DELETED
+    val shape = MaterialTheme.shapes.large
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
             .then(
                 if (selected) {
-                    Modifier.border(
-                        2.dp,
-                        MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(20.dp),
-                    )
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
                 } else {
                     Modifier
                 },
@@ -444,16 +492,17 @@ private fun RecordingCard(
                 onClick = { if (selectionMode) onToggleSelect() else onClick() },
                 onLongClick = { if (!selectionMode) onLongPress() },
             ),
-        shape = RoundedCornerShape(20.dp),
+        shape = shape,
         colors = CardDefaults.cardColors(
             containerColor = when {
                 selected -> MaterialTheme.colorScheme.primaryContainer
-                isRecording -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                isRecording -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                else -> MaterialTheme.colorScheme.surface
             },
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 0.dp else 1.dp),
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
                     Icon(
@@ -483,11 +532,12 @@ private fun RecordingCard(
                     rec.title,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 if (!selectionMode) {
                     Box {
-                        IconButton(onClick = onMenuClick, modifier = Modifier.size(28.dp)) {
+                        IconButton(onClick = onMenuClick, modifier = Modifier.size(40.dp)) {
                             Icon(
                                 Icons.Filled.MoreVert,
                                 contentDescription = "更多操作",
@@ -531,7 +581,7 @@ private fun RecordingCard(
                     )
                 }
             }
-            Spacer(Modifier.height(5.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
                 buildString {
                     append(Formatters.timeOnly(rec.startTime))
@@ -549,13 +599,14 @@ private fun RecordingCard(
                         )
                     }
                 },
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall.tabularNumbers(),
                 color = if (isRecording) {
                     MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
-                maxLines = 2,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             if (item.markerFailed > 0) {
                 Spacer(Modifier.height(4.dp))
@@ -595,21 +646,12 @@ private fun RecordingPulseDot() {
     )
 }
 
-/** 课程名 → 稳定颜色（同课程同色，无课程返回 null 不显示色点） */
-private val CoursePalette = listOf(
-    Color(0xFF1F8A73),
-    Color(0xFF3B6FA0),
-    Color(0xFF7E57C2),
-    Color(0xFFE2894B),
-    Color(0xFFC2568F),
-    Color(0xFF2E9AA6),
-    Color(0xFF5C6BC0),
-    Color(0xFF8D6E63),
-)
-
+/** 课程名 → 稳定颜色（同课程同色；课程名为空时不显示色点） */
+@Composable
 private fun courseColor(name: String?): Color? {
     if (name.isNullOrBlank()) return null
-    return CoursePalette[kotlin.math.abs(name.hashCode()) % CoursePalette.size]
+    val palette = MaterialTheme.recordColors.coursePalette
+    return palette[kotlin.math.abs(name.hashCode()) % palette.size]
 }
 
 /** 录音中首页顶部的横幅卡：点击回录音页；内部自行收集状态，避免整页随计时器重组 */
@@ -626,8 +668,9 @@ private fun RecordingBanner(onClick: () -> Unit) {
     )
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(20.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 6.dp),

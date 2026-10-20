@@ -3,6 +3,8 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
+        <!-- 与 Compose 的 background 一致，避免启动时白闪 -->
+        <item name="android:windowBackground">#FFF5F7F6</item>
     </style>
 
     <!-- uCrop 的 UCropActivity 是 AppCompatActivity，必须用 AppCompat 系主题，

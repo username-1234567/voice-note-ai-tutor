@@ -11,6 +11,8 @@ import com.suitanglu.app.ui.screens.home.HomeScreen
 import com.suitanglu.app.ui.screens.playback.PlaybackScreen
 import com.suitanglu.app.ui.screens.recording.RecordingScreen
 import com.suitanglu.app.ui.screens.recycle.RecycleBinScreen
+import com.suitanglu.app.ui.screens.settings.AiSettingsScreen
+import com.suitanglu.app.ui.screens.settings.DataSettingsScreen
 import com.suitanglu.app.ui.screens.settings.ScheduleScreen
 import com.suitanglu.app.ui.screens.settings.SettingsScreen
 
@@ -19,6 +21,8 @@ object Routes {
     const val RECORDING = "recording"
     const val PLAYBACK = "playback/{recordingId}"
     const val SETTINGS = "settings"
+    const val SETTINGS_AI = "settings/ai"
+    const val SETTINGS_DATA = "settings/data"
     const val SCHEDULE = "schedule"
     const val RECYCLE = "recycle"
     const val CAMERA = "camera"
@@ -78,7 +82,15 @@ fun RecordNavHost(
             SettingsScreen(
                 onBack = { nav.popBackStack() },
                 onOpenSchedule = { nav.navigate(Routes.SCHEDULE) },
+                onOpenAi = { nav.navigate(Routes.SETTINGS_AI) },
+                onOpenData = { nav.navigate(Routes.SETTINGS_DATA) },
             )
+        }
+        composable(Routes.SETTINGS_AI) {
+            AiSettingsScreen(onBack = { nav.popBackStack() })
+        }
+        composable(Routes.SETTINGS_DATA) {
+            DataSettingsScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.SCHEDULE) {
             ScheduleScreen(onBack = { nav.popBackStack() })

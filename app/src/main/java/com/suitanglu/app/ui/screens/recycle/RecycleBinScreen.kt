@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -105,8 +106,13 @@ fun RecycleBinScreen(onBack: () -> Unit) {
                 }
                 LazyColumn {
                     items(items, key = { it.id }) { rec ->
-                        Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-                            Column(Modifier.padding(12.dp)) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
                                 Text(rec.title, style = MaterialTheme.typography.titleMedium)
                                 Text(
                                     "删除于 ${rec.deletedAt?.let { Formatters.dateTime(it) } ?: "-"} · ${Formatters.duration(rec.durationMs)}",

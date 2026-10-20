@@ -13,6 +13,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -46,11 +47,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -222,7 +226,7 @@ fun RecordingScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(s.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+        Text(s.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(4.dp))
         AnimatedContent(
             targetState = Triple(s.interrupted, s.paused, s.interruptReason),
@@ -254,32 +258,43 @@ fun RecordingScreen(
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(28.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            // 次要操作：暂停/继续，低饱和实心
+            FilledIconButton(
                 onClick = { vm.pauseOrResume() },
-                modifier = Modifier.size(64.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                modifier = Modifier.size(60.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
             ) {
                 Icon(
                     if (s.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
                     contentDescription = if (s.paused) "继续" else "暂停",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(28.dp),
                 )
             }
-            IconButton(
+            // 危险操作：停止。用描边而非大红实心，避免抢走「拍照并标记」的主角位；
+            // 点击后仍有确认弹窗，误触不会直接结束录音。
+            OutlinedIconButton(
                 onClick = { showStopConfirm = true },
-                modifier = Modifier.size(72.dp).background(MaterialTheme.colorScheme.errorContainer, CircleShape),
+                modifier = Modifier.size(60.dp),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.55f)),
+                colors = IconButtonDefaults.outlinedIconButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
             ) {
                 Icon(
-                    Icons.Filled.Stop, contentDescription = "停止",
-                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.size(36.dp),
+                    Icons.Filled.Stop,
+                    contentDescription = "停止",
+                    modifier = Modifier.size(26.dp),
                 )
             }
         }
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(28.dp))
         Button(
             onClick = {
                 if (!hasCameraPermission && general.cameraMode != CameraMode.SYSTEM) {

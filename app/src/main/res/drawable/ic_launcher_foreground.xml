@@ -1,10 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  随堂录图标前景：五段声波（中间一段用浅薄荷色强调"当前音量/正在进行"）。
+  全部用圆头描边绘制，缩到 48dp 仍是干净的柱状剪影；
+  内容控制在自适应图标安全区（约 66dp 圆）内，圆形/方圆/方形遮罩都不会被切。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,28c-5.5,0 -10,4.5 -10,10v16c0,5.5 4.5,10 10,10s10,-4.5 10,-10V38c0,-5.5 -4.5,-10 -10,-10zM38,52c0,8.8 7.2,16 16,16s16,-7.2 16,-16h5c0,10.5 -7.8,19.2 -18,20.7V82h-6v-9.3c-10.2,-1.5 -18,-10.2 -18,-20.7h5z" />
+        android:pathData="M28,45 L28,63"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M42,37 L42,71"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M56,30 L56,78"
+        android:strokeColor="#9FE3CD"
+        android:strokeWidth="8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M70,36 L70,72"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M84,44 L84,64"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round" />
 </vector>

@@ -1,0 +1,9 @@
+<resources>
+    <!-- 深色模式：窗口底色跟随 Compose 的深色 background，启动不再白闪 -->
+    <style name="Theme.Record" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">#FF0E1312</item>
+    </style>
+</resources>

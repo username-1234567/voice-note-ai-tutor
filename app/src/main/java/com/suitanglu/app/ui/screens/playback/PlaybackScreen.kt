@@ -40,6 +40,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,6 +62,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -83,6 +85,8 @@ import com.suitanglu.app.data.db.MarkerTurn
 import com.suitanglu.app.data.db.PauseEvent
 import com.suitanglu.app.data.db.Recording
 import com.suitanglu.app.ai.StreamingState
+import com.suitanglu.app.ui.theme.recordColors
+import com.suitanglu.app.ui.theme.tabularNumbers
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -202,16 +206,14 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                             IconButton(onClick = { vm.skip(-15_000) }) {
                                 Icon(Icons.Filled.FastRewind, contentDescription = "后退15秒")
                             }
-                            IconButton(
+                            FilledIconButton(
                                 onClick = { vm.togglePlay() },
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                modifier = Modifier.size(60.dp),
                             ) {
                                 Icon(
                                     if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                                     contentDescription = if (playing) "暂停" else "播放",
-                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(30.dp),
                                 )
                             }
                             IconButton(onClick = { vm.skip(15_000) }) {
@@ -334,12 +336,13 @@ fun MarkerProgressBar(
     onMarkerClick: (Marker) -> Unit,
     onPausePointClick: (PauseEvent) -> Unit,
 ) {
-    val trackColor = MaterialTheme.colorScheme.surfaceVariant
-    val playedColor = com.suitanglu.app.ui.theme.BrandAccent()
-    val successColor = MaterialTheme.colorScheme.primary
+    val extra = MaterialTheme.recordColors
+    val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    val playedColor = MaterialTheme.colorScheme.primary
+    val successColor = extra.success
     val failedColor = MaterialTheme.colorScheme.error
-    val pendingColor = MaterialTheme.colorScheme.tertiary
-    val pauseColor = Color(0xFFFF9800)
+    val pendingColor = extra.pending
+    val pauseColor = extra.pauseMark
     val density = androidx.compose.ui.platform.LocalDensity.current
     val barHeight = with(density) { 8.dp.toPx() }
     val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
@@ -365,7 +368,9 @@ fun MarkerProgressBar(
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            // 60dp：轨道居中偏下，给上方"多标记"角标留出完整绘制空间
+            // （52dp 时角标圆心在 2.8dp，圆被画布顶边裁掉一半）
+            .height(60.dp)
             .pointerInput(clusters, pauseEvents, totalMs) {
                 detectTapGestures { offset ->
                     val fraction = (offset.x / size.width).coerceIn(0f, 1f)
@@ -395,7 +400,7 @@ fun MarkerProgressBar(
                 }
             },
     ) {
-        val y = size.height / 2 - 4.dp.toPx()
+        val y = size.height / 2 + 4.dp.toPx()
         // 分钟刻度（间隔足够时才画）
         val totalMinutes = (totalMs / 60_000).toInt()
         if (totalMinutes in 3..240) {
@@ -526,19 +531,18 @@ private fun MarkerCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
             .clickable { onClick() },
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-        ),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(12.dp).animateContentSize()) {
+        Column(Modifier.padding(16.dp).animateContentSize()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     Formatters.clockTime(marker.offsetMs),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleMedium.tabularNumbers(),
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.width(8.dp))
                 val summary = marker.userText?.take(20)
@@ -573,7 +577,8 @@ private fun MarkerCard(
                                 modifier = Modifier
                                     .width(120.dp)
                                     .height(90.dp)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                     .clickable { fullImage = img.filePath },
                             )
                         }
@@ -711,7 +716,7 @@ private fun TurnView(
                 Modifier
                     .weight(1f, fill = false)
                     .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
                         RoundedCornerShape(12.dp),
                     )
                     .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -813,18 +818,30 @@ private fun UsageHint(turn: MarkerTurn) {
 
 @Composable
 fun StatusChip(status: String) {
-    val (label, color) = when (status) {
-        Marker.AI_SUCCESS -> "成功" to MaterialTheme.colorScheme.primary
-        Marker.AI_FAILED -> "失败" to MaterialTheme.colorScheme.error
-        Marker.AI_SENDING -> "发送中" to MaterialTheme.colorScheme.tertiary
-        else -> "待发送" to MaterialTheme.colorScheme.tertiary
+    val extra = MaterialTheme.recordColors
+    val (label, fg, bg) = when (status) {
+        Marker.AI_SUCCESS -> Triple("成功", extra.success, extra.successContainer)
+        Marker.AI_FAILED -> Triple(
+            "失败",
+            MaterialTheme.colorScheme.error,
+            MaterialTheme.colorScheme.errorContainer,
+        )
+        Marker.AI_SENDING -> Triple("发送中", extra.pending, extra.pendingContainer)
+        else -> Triple(
+            "待发送",
+            MaterialTheme.colorScheme.onSurfaceVariant,
+            MaterialTheme.colorScheme.surfaceContainerHighest,
+        )
     }
-    Text(
-        label,
-        style = MaterialTheme.typography.labelMedium,
-        color = color,
+    Row(
         modifier = Modifier
-            .background(color.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    )
+            .background(bg, RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 颜色 + 圆点双通道：不依赖颜色也能分辨状态
+        Box(Modifier.size(6.dp).background(fg, CircleShape))
+        Spacer(Modifier.width(5.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = fg)
+    }
 }

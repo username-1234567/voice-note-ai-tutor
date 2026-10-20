@@ -7,6 +7,7 @@ import com.suitanglu.app.AppGraph
 import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.data.db.Marker
 import com.suitanglu.app.data.db.Recording
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -29,7 +30,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val container = AppGraph.get(app)
     private val repo = container.recordingRepository
 
-    val sections: StateFlow<List<HomeSection>> =
+    /** 未筛选的全部录音，按天分区 */
+    private val allSections: StateFlow<List<HomeSection>> =
         combine(container.db.recordingDao().observeActive(), container.db.markerDao().observeAll()) { recs, markers ->
             val byRecording = markers.groupBy { it.recordingId }
             val items = recs.map { rec ->
@@ -47,6 +49,41 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             items.groupBy { Formatters.dateLabel(it.recording.startTime) }
                 .map { (label, list) -> HomeSection(label, list) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _courseFilter = MutableStateFlow<String?>(null)
+
+    /** null = 全部；否则只显示该课程 */
+    val courseFilter: StateFlow<String?> = _courseFilter
+
+    /**
+     * 筛选器选项：只列出真正出现过的课程名（按名称排序）。
+     * 依据的是录音命中的课程名，而不是用户改过的展示标题——改标题后仍能按课程筛。
+     */
+    val courses: StateFlow<List<String>> = allSections
+        .map { sections ->
+            sections.asSequence()
+                .flatMap { it.items.asSequence() }
+                .mapNotNull { it.recording.courseName?.takeIf(String::isNotBlank) }
+                .distinct()
+                .sorted()
+                .toList()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val sections: StateFlow<List<HomeSection>> = combine(allSections, _courseFilter) { sections, course ->
+        if (course == null) {
+            sections
+        } else {
+            sections.mapNotNull { section ->
+                val items = section.items.filter { it.recording.courseName == course }
+                if (items.isEmpty()) null else section.copy(items = items)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun setCourseFilter(course: String?) {
+        _courseFilter.value = course
+    }
 
     val firstDeleteTipShown: StateFlow<Boolean> = container.settings.generalConfig
         .map { it.firstDeleteTipShown }

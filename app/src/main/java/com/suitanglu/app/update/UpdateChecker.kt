@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 object UpdateConfig {
     const val OWNER = "username-1234567"
     const val REPO = "voice-note-ai-tutor"
-    const val CURRENT_VERSION = "1.2.0"
+    const val CURRENT_VERSION = "1.3.0"
 }
 
 data class UpdateInfo(
