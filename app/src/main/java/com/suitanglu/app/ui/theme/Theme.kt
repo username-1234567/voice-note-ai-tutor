@@ -197,12 +197,14 @@ fun BrandAccent(): Color = MaterialTheme.colorScheme.primary
 /** 数字等宽（计时器、时间标签不左右跳动） */
 fun TextStyle.tabularNumbers(): TextStyle = copy(fontFeatureSettings = "tnum")
 
+// 只用两档圆角：10dp = 控件（输入框、缩略图、图标块、行高亮），16dp = 容器（卡片、横幅）。
+// 之前 8/12/14/18 混用，同一屏能数出五种圆角，视觉上就是"没规矩"。
 private val RecordShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
+    extraSmall = RoundedCornerShape(10.dp),
     small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(18.dp),
-    extraLarge = RoundedCornerShape(24.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(16.dp),
 )
 
 // 中文界面：正文行高按 1.5 倍留白，标题收紧；层级靠字重与颜色，不靠一味放大字号

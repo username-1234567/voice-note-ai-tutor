@@ -13,6 +13,11 @@ data class RecordingState(
     val paused: Boolean,
     val interrupted: Boolean,
     val interruptReason: String? = null,
+    /**
+     * 当前输入电平 0..1（取自 MediaRecorder.maxAmplitude，每次读取会自动重置峰值）。
+     * 只用于录音页的声纹环，不参与任何业务判断，取不到时保持 0。
+     */
+    val level: Float = 0f,
 )
 
 object RecordingBus {

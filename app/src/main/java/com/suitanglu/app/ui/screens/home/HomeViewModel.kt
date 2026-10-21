@@ -21,6 +21,8 @@ data class HomeItem(
     val markerSuccess: Int,
     val markerFailed: Int,
     val subtitle: String,
+    /** 小写化的可搜索文本：标题 + 课程名 + 标记文字 + AI 回复前 500 字 */
+    val searchText: String,
 )
 
 data class HomeSection(val label: String, val items: List<HomeItem>)
@@ -44,6 +46,14 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                     markerSuccess = success,
                     markerFailed = failed,
                     subtitle = repo.recordingSubtitle(rec, ms),
+                    searchText = buildString {
+                        append(rec.title).append(' ')
+                        rec.courseName?.let { append(it).append(' ') }
+                        ms.forEach { m ->
+                            m.userText?.let { append(it).append(' ') }
+                            m.aiResponse?.take(500)?.let { append(it).append(' ') }
+                        }
+                    }.lowercase(),
                 )
             }
             items.groupBy { Formatters.dateLabel(it.recording.startTime) }
@@ -52,8 +62,25 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _courseFilter = MutableStateFlow<String?>(null)
 
+    private val _query = MutableStateFlow("")
+
+    /** 搜索框内容 */
+    val searchQuery: StateFlow<String> = _query
+
     /** null = 全部；否则只显示该课程 */
     val courseFilter: StateFlow<String?> = _courseFilter
+
+    private val courseFiltered: StateFlow<List<HomeSection>> =
+        combine(allSections, _courseFilter) { sections, course ->
+            if (course == null) {
+                sections
+            } else {
+                sections.mapNotNull { section ->
+                    val items = section.items.filter { it.recording.courseName == course }
+                    if (items.isEmpty()) null else section.copy(items = items)
+                }
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
      * 筛选器选项：只列出真正出现过的课程名（按名称排序）。
@@ -70,12 +97,14 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val sections: StateFlow<List<HomeSection>> = combine(allSections, _courseFilter) { sections, course ->
-        if (course == null) {
+    val sections: StateFlow<List<HomeSection>> = combine(courseFiltered, _query) { sections, rawQuery ->
+        val needle = rawQuery.trim().lowercase()
+        if (needle.isEmpty()) {
             sections
         } else {
+            // 命中标题、课程名或任一标记的文字/讲解
             sections.mapNotNull { section ->
-                val items = section.items.filter { it.recording.courseName == course }
+                val items = section.items.filter { it.searchText.contains(needle) }
                 if (items.isEmpty()) null else section.copy(items = items)
             }
         }
@@ -83,6 +112,18 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setCourseFilter(course: String?) {
         _courseFilter.value = course
+    }
+
+    /**
+     * 一条录音都没有（未筛选）。空状态要把搜索框、筛选器这些"没有内容可作用"的控件藏起来。
+     * 不能用 sections.isEmpty() 判断：搜索无结果时它也是空的，那时搜索框必须留着让人清空。
+     */
+    val noRecordingsAtAll: StateFlow<Boolean> = allSections
+        .map { it.isEmpty() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setQuery(query: String) {
+        _query.value = query
     }
 
     val firstDeleteTipShown: StateFlow<Boolean> = container.settings.generalConfig

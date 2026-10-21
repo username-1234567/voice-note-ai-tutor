@@ -77,6 +77,18 @@ object Formatters {
         return String.format("%02d:%02d", total / 60, total % 60)
     }
 
+    /** 时间轴里的时长："98 分钟" —— 比 01:38:12 好读，也不会被误认成时刻 */
+    fun durationShort(ms: Long): String {
+        val sec = ms / 1000
+        return if (sec < 60) "$sec 秒" else "${(sec + 30) / 60} 分钟"
+    }
+
+    /** 星期几，用于日期分组头 */
+    fun weekdayShort(millis: Long): String {
+        val dow = CourseSchedule.localDateTime(millis).dayOfWeek.value
+        return "周" + "一二三四五六日"[dow - 1]
+    }
+
     fun dateTime(millis: Long): String {
         val t = CourseSchedule.localDateTime(millis)
         return "%04d-%02d-%02d %02d:%02d".format(t.year, t.monthValue, t.dayOfMonth, t.hour, t.minute)

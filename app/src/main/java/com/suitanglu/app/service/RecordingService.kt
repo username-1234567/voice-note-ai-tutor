@@ -195,6 +195,15 @@ class RecordingService : Service() {
                         paused = paused,
                         interrupted = interrupted,
                         interruptReason = interruptReason,
+                        level = if (paused || interrupted) {
+                            0f
+                        } else {
+                            // maxAmplitude 在未录制/已暂停时会抛 IllegalStateException，
+                            // 且读取后峰值归零，正好等于"最近 500ms 的峰值"
+                            runCatching { (recorder?.maxAmplitude ?: 0) / 32767f }
+                                .getOrDefault(0f)
+                                .coerceIn(0f, 1f)
+                        },
                     ),
                 )
                 if (now - lastNotify > 5_000) {

@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -71,6 +72,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -130,14 +132,33 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            TopAppBar(
-                title = { Text(recording?.title ?: "录音回放", maxLines = 1) },
-                navigationIcon = {
+            // 标题区直接给出"哪节课、哪天、多长"：这三项是回放时最常回看的信息
+            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
-                },
-            )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            recording?.title ?: "录音回放",
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        recording?.let { rec ->
+                            Text(
+                                "${Formatters.dateTime(rec.startTime)} · ${Formatters.durationShort(rec.durationMs)}",
+                                style = MaterialTheme.typography.labelMedium.tabularNumbers(),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
         },
     ) { padding ->
         val rec = recording
@@ -227,7 +248,9 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         ) {
                             Text(
                                 "${Formatters.clockTime(position)} / ${Formatters.clockTime(duration.takeIf { it > 0 } ?: rec.durationMs)}",
-                                style = MaterialTheme.typography.labelMedium,
+                                // 播放进度每 200ms 刷新，不等宽会让整行左右抖
+                                style = MaterialTheme.typography.labelMedium.tabularNumbers(),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Box {
                                 AssistChip(
@@ -579,6 +602,12 @@ private fun MarkerCard(
                                     .height(90.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                                    // 图片边缘在深色底上会糊开，加一道中性细描边收住轮廓
+                                    .border(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+                                        RoundedCornerShape(10.dp),
+                                    )
                                     .clickable { fullImage = img.filePath },
                             )
                         }
@@ -717,7 +746,7 @@ private fun TurnView(
                     .weight(1f, fill = false)
                     .background(
                         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-                        RoundedCornerShape(12.dp),
+                        RoundedCornerShape(10.dp),
                     )
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
@@ -835,7 +864,7 @@ fun StatusChip(status: String) {
     }
     Row(
         modifier = Modifier
-            .background(bg, RoundedCornerShape(8.dp))
+            .background(bg, RoundedCornerShape(10.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

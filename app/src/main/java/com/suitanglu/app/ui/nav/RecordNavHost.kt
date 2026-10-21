@@ -1,11 +1,19 @@
 package com.suitanglu.app.ui.nav
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.suitanglu.app.ui.theme.rememberReducedMotion
 import com.suitanglu.app.ui.screens.camera.InAppCameraScreen
 import com.suitanglu.app.ui.screens.home.HomeScreen
 import com.suitanglu.app.ui.screens.playback.PlaybackScreen
@@ -38,7 +46,34 @@ fun RecordNavHost(
     onRequestPermissions: () -> Unit,
 ) {
     val nav = rememberNavController()
-    NavHost(navController = nav, startDestination = Routes.HOME) {
+    // 页面切换：淡入 + 轻微横移。进入 360ms 落在"整页切换 350–500ms"的区间内，
+    // 退出略短（240ms）——注意力在进入，离开要快。位移只有 1/12 屏宽，够表达方向又不至于像抽屉。
+    // 系统关闭动画时直接到位。
+    val reducedMotion = rememberReducedMotion()
+    NavHost(
+        navController = nav,
+        startDestination = Routes.HOME,
+        enterTransition = {
+            if (reducedMotion) {
+                EnterTransition.None
+            } else {
+                fadeIn(tween(360)) + slideInHorizontally(tween(360)) { it / 12 }
+            }
+        },
+        exitTransition = {
+            if (reducedMotion) ExitTransition.None else fadeOut(tween(240))
+        },
+        popEnterTransition = {
+            if (reducedMotion) EnterTransition.None else fadeIn(tween(360))
+        },
+        popExitTransition = {
+            if (reducedMotion) {
+                ExitTransition.None
+            } else {
+                fadeOut(tween(240)) + slideOutHorizontally(tween(240)) { it / 12 }
+            }
+        },
+    ) {
         composable(Routes.HOME) {
             HomeScreen(
                 hasNotificationPermission = hasNotificationPermission,

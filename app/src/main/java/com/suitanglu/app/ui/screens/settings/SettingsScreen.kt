@@ -14,6 +14,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -81,15 +84,29 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SettingsSection("常用", compact = true) {
-                SettingsEntry("课程表", "按星期几与时间段自动命名录音", onOpenSchedule)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingsEntry(
-                    "AI 配置",
-                    if (ai.apiKey.isBlank()) "未填写 API Key" else "${ai.model} · 已配置",
-                    onOpenAi,
+                    title = "课程表",
+                    subtitle = "按星期几与时间段自动命名录音",
+                    icon = Icons.Outlined.CalendarMonth,
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = onOpenSchedule,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                SettingsEntry("数据与存储", "导出备份、导入、空间占用与图片压缩", onOpenData)
+                SettingsEntry(
+                    title = "AI 配置",
+                    subtitle = if (ai.apiKey.isBlank()) "未填写 API Key" else "${ai.model} · 已配置",
+                    icon = Icons.Outlined.AutoAwesome,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    onClick = onOpenAi,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingsEntry(
+                    title = "数据与存储",
+                    subtitle = "导出备份、导入、空间占用与图片压缩",
+                    icon = Icons.Outlined.FolderOpen,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    onClick = onOpenData,
+                )
             }
 
             SettingsSection("录音设置") {
@@ -137,7 +154,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 when (val s = updateState) {
-                    is UpdateUiState.Idle -> Button(onClick = { vm.checkUpdate() }) { Text("检查更新") }
+                    is UpdateUiState.Idle -> OutlinedButton(onClick = { vm.checkUpdate() }) { Text("检查更新") }
                     UpdateUiState.Checking -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.width(16.dp).height(16.dp))
                         Spacer(Modifier.width(8.dp))

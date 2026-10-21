@@ -2,9 +2,10 @@ package com.suitanglu.app.ui.screens.home
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -12,18 +13,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -31,6 +35,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -39,11 +45,13 @@ import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.Audiotrack
+import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,36 +66,51 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.suitanglu.app.AppGraph
 import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.data.db.Recording
 import com.suitanglu.app.service.RecordingBus
-import com.suitanglu.app.service.RecordingService
 import com.suitanglu.app.ui.theme.recordColors
+import com.suitanglu.app.ui.theme.rememberReducedMotion
 import com.suitanglu.app.ui.theme.tabularNumbers
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+private val RowHeight = 76.dp
+private val TimeColumnWidth = 54.dp
+private val AxisWidth = 26.dp
+private val NodeCenterY = 21.dp
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     hasNotificationPermission: Boolean,
@@ -103,15 +126,33 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val sections by vm.sections.collectAsState()
+    val courses by vm.courses.collectAsState()
+    val courseFilter by vm.courseFilter.collectAsState()
     val tipShown by vm.firstDeleteTipShown.collectAsState()
+    val query by vm.searchQuery.collectAsState()
+    val noRecordingsAtAll by vm.noRecordingsAtAll.collectAsState()
+    val reducedMotion = rememberReducedMotion()
+    // 只在本次进程首次进入首页时出场一次；从回放返回不重放
+    var entered by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    val enterAlpha by animateFloatAsState(
+        targetValue = if (entered || reducedMotion) 1f else 0f,
+        animationSpec = tween(260),
+        label = "enterAlpha",
+    )
+    val enterShift by animateFloatAsState(
+        targetValue = if (entered || reducedMotion) 0f else 14f,
+        animationSpec = tween(260),
+        label = "enterShift",
+    )
+    val listState = rememberLazyListState()
+    var showDatePicker by remember { mutableStateOf(false) }
     // 只在空↔非空跳变时更新，避免录音计时器每 500ms 触发整页重组
     // （不能用 derivedStateOf 包 StateFlow.value：StateFlow 不是快照状态，不会触发重算）
     val isRecording by remember {
         RecordingBus.state.map { it != null }.distinctUntilChanged()
     }.collectAsState(initial = RecordingBus.state.value != null)
     val recoveredCount by container.recordingRepository.recoveredCount.collectAsState()
-    val courses by vm.courses.collectAsState()
-    val courseFilter by vm.courseFilter.collectAsState()
 
     LaunchedEffect(recoveredCount) {
         recoveredCount?.let {
@@ -142,6 +183,42 @@ fun HomeScreen(
         if (hasNotificationPermission) showNoPermissionHint = false
     }
 
+    // 每个分组对应的日期，以及分组头在 LazyColumn 中的位置（分组头 + 该组条目数累加）
+    val sectionDates = remember(sections) {
+        sections.map {
+            Instant.ofEpochMilli(it.items.first().recording.startTime)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+        }
+    }
+    val headerIndices = remember(sections) {
+        var acc = 0
+        sections.map { section ->
+            acc.also { acc += 1 + section.items.size }
+        }
+    }
+
+    fun jumpToDate(utcMillis: Long) {
+        if (sections.isEmpty()) {
+            scope.launch { snackbar.showSnackbar("还没有可跳转的录音") }
+            return
+        }
+        // DatePicker 给的是 UTC 零点，按 UTC 取回日期才不会差一天
+        val target: LocalDate = Instant.ofEpochMilli(utcMillis).atZone(ZoneOffset.UTC).toLocalDate()
+        val exact = sectionDates.indexOf(target)
+        // 分组按时间倒序：第一个"不晚于目标"的分组就是最近的一天
+        val nearest = sectionDates.indexOfFirst { it <= target }.let { if (it >= 0) it else sectionDates.lastIndex }
+        val index = if (exact >= 0) exact else nearest
+        scope.launch { listState.scrollToItem(headerIndices[index]) }
+        if (exact < 0) {
+            scope.launch {
+                snackbar.showSnackbar(
+                    "${target.monthValue}月${target.dayOfMonth}日没有录音，已跳到最近的 ${Formatters.dateLabel(sections[index].items.first().recording.startTime)}",
+                )
+            }
+        }
+    }
+
     var exportTargetId by remember { mutableStateOf(0L) }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip"),
@@ -160,63 +237,58 @@ fun HomeScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            if (selectionMode) {
-                TopAppBar(
-                    title = { Text("已选 ${selectedIds.size} 项") },
-                    navigationIcon = {
-                        IconButton(onClick = { exitSelection() }) {
-                            Icon(Icons.Filled.Close, contentDescription = "退出选择")
-                        }
-                    },
-                    actions = {
-                        TextButton(onClick = { selectedIds = allRecordingIds }) { Text("全选") }
-                        TextButton(
-                            enabled = selectedIds.isNotEmpty(),
-                            onClick = {
-                                vm.deleteToRecycleMany(selectedIds)
-                                val n = selectedIds.size
-                                exitSelection()
-                                scope.launch { snackbar.showSnackbar("已将 $n 条录音移入回收站") }
-                            },
-                        ) { Text("移入回收站") }
-                    },
-                )
-            } else {
-                TopAppBar(
-                    title = { Text("随堂录", style = MaterialTheme.typography.titleLarge) },
-                    actions = {
-                        IconButton(onClick = onOpenRecycle) {
-                            Icon(Icons.Filled.Delete, contentDescription = "回收站")
-                        }
-                        IconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Filled.Settings, contentDescription = "设置")
-                        }
-                    },
-                )
-            }
-        },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = {
                     if (isRecording) {
-                        // 正在录音：回录音页
+                        onStartRecording()
+                    } else if (hasNotificationPermission || android.os.Build.VERSION.SDK_INT < 33) {
                         onStartRecording()
                     } else {
-                        if (hasNotificationPermission || android.os.Build.VERSION.SDK_INT < 33) {
-                            onStartRecording()
-                        } else {
-                            showNoPermissionHint = true
-                            onRequestPermissions()
-                        }
+                        showNoPermissionHint = true
+                        onRequestPermissions()
                     }
                 },
+                // 全页唯一的高饱和块：主操作必须最显眼
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                 text = { Text(if (isRecording) "返回录音中" else "开始录音") },
             )
         },
     ) { padding ->
-        Column(Modifier.padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (selectionMode) {
+                SelectionHeader(
+                    count = selectedIds.size,
+                    onExit = { exitSelection() },
+                    onSelectAll = { selectedIds = allRecordingIds },
+                    onDelete = {
+                        vm.deleteToRecycleMany(selectedIds)
+                        val n = selectedIds.size
+                        exitSelection()
+                        scope.launch { snackbar.showSnackbar("已将 $n 条录音移入回收站") }
+                    },
+                )
+            } else {
+                HomeHeader(
+                    totalCount = sections.sumOf { it.items.size },
+                    totalMs = sections.sumOf { section -> section.items.sumOf { it.recording.durationMs } },
+                    courseName = courseFilter,
+                    onOpenRecycle = onOpenRecycle,
+                    onOpenSettings = onOpenSettings,
+                )
+            }
+
+            // 空状态隐藏搜索与筛选：没有内容时它们是空壳控件
+            if (!selectionMode && !noRecordingsAtAll) {
+                SearchRow(
+                    query = query,
+                    onQueryChange = { vm.setQuery(it) },
+                    onPickDate = { showDatePicker = true },
+                )
+            }
+
             if (isRecording) {
                 RecordingBanner(onClick = { onStartRecording() })
             }
@@ -233,41 +305,54 @@ fun HomeScreen(
                     )
                 }
             }
+
             // 课程筛选：只列出真正出现过的课程，避免空课程占位
             if (courses.isNotEmpty()) {
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    FilterChip(
+                    CourseFilterChip(
+                        label = "全部",
                         selected = courseFilter == null,
+                        dotColor = null,
                         onClick = { vm.setCourseFilter(null) },
-                        label = { Text("全部") },
                     )
                     courses.forEach { course ->
                         val active = courseFilter == course
-                        FilterChip(
+                        CourseFilterChip(
+                            label = course,
                             selected = active,
-                            // 再点一次已选中的课程 = 取消筛选，省一次回「全部」
+                            dotColor = courseColor(course),
+                            // 再点一次已选中的课程 = 取消筛选
                             onClick = { vm.setCourseFilter(if (active) null else course) },
-                            label = { Text(course, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = {
-                                Box(
-                                    Modifier
-                                        .size(8.dp)
-                                        .background(courseColor(course) ?: Color.Transparent, CircleShape),
-                                )
-                            },
                         )
                     }
                 }
             }
-            if (sections.isEmpty() && courseFilter != null) {
-                // 该课程下暂时没有录音：给一个退出口，而不是复用全局空状态
+
+            if (sections.isEmpty() && query.isNotBlank()) {
+                Column(
+                    Modifier.fillMaxSize().padding(32.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("没有匹配「$query」的录音", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "可以搜课程名、录音标题，或标记里的文字与讲解内容。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(onClick = { vm.setQuery("") }) { Text("清除搜索") }
+                }
+            } else if (sections.isEmpty() && courseFilter != null) {
                 Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     verticalArrangement = Arrangement.Center,
@@ -284,62 +369,32 @@ fun HomeScreen(
                     TextButton(onClick = { vm.setCourseFilter(null) }) { Text("查看全部") }
                 }
             } else if (sections.isEmpty()) {
-                Column(
-                    Modifier.fillMaxSize().padding(32.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(84.dp)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Outlined.Audiotrack,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(36.dp),
-                        )
-                    }
-                    Spacer(Modifier.height(24.dp))
-                    Text("还没有录音", style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "上课时点「开始录音」，遇到重点拍照标记。\n录音结束后会自动把图片发给 AI 讲解。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 24.dp),
-                    )
-                }
+                EmptyState()
             } else {
-                LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 96.dp)) {
+                LazyColumn(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = enterAlpha
+                            translationY = enterShift.dp.toPx()
+                        },
+                    state = listState,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 96.dp),
+                ) {
                     for (section in sections) {
                         stickyHeader(key = "header_${section.label}") {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.background)
-                                    .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
-                                verticalAlignment = Alignment.Bottom,
-                            ) {
-                                Text(
-                                    section.label,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Text(
-                                    "${section.items.size} 条",
-                                    style = MaterialTheme.typography.labelMedium.tabularNumbers(),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                            GroupHeader(
+                                label = section.label,
+                                weekday = Formatters.weekdayShort(section.items.first().recording.startTime),
+                                count = section.items.size,
+                            )
                         }
-                        items(section.items, key = { it.recording.id }) { item ->
-                            RecordingCard(
+                        itemsIndexed(section.items, key = { _, it -> it.recording.id }) { index, item ->
+                            TimelineRow(
+                                modifier = Modifier.animateItem(),
                                 item = item,
+                                isFirst = index == 0,
+                                isLast = index == section.items.lastIndex,
                                 selectionMode = selectionMode,
                                 selected = item.recording.id in selectedIds,
                                 onToggleSelect = {
@@ -355,7 +410,6 @@ fun HomeScreen(
                                     }
                                 },
                                 onLongPress = {
-                                    // 长按进入批量选择并选中该条
                                     selectionMode = true
                                     selectedIds = selectedIds + item.recording.id
                                 },
@@ -370,7 +424,6 @@ fun HomeScreen(
                                 onDelete = {
                                     menuFor = null
                                     if (tipShown) {
-                                        // 提醒过一次后直接进回收站（可恢复，无需每次确认）
                                         vm.deleteToRecycle(item.recording.id)
                                     } else {
                                         pendingDelete = item.recording
@@ -454,12 +507,237 @@ fun HomeScreen(
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } },
         )
     }
+
+    // 按日期跳转：直接滚到那天的分组；那天没录音就退到最近的一天并说明
+    if (showDatePicker) {
+        val dateState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    enabled = dateState.selectedDateMillis != null,
+                    onClick = {
+                        dateState.selectedDateMillis?.let { jumpToDate(it) }
+                        showDatePicker = false
+                    },
+                ) { Text("跳转") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+            },
+        ) {
+            DatePicker(state = dateState)
+        }
+    }
 }
 
+/** 搜索 + 日期跳转合成一行：都是"找某段录音"的入口，没必要各占一行 */
+@Composable
+private fun SearchRow(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onPickDate: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 2.dp)
+            .height(42.dp)
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Spacer(Modifier.width(12.dp))
+        Icon(
+            Icons.Filled.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) {
+                Text(
+                    "搜索课程、标题或标记文字",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (query.isNotEmpty()) {
+            IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "清除搜索",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        IconButton(onClick = onPickDate, modifier = Modifier.size(40.dp)) {
+            Icon(
+                Icons.Filled.CalendarMonth,
+                contentDescription = "按日期跳转",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 大标题 + 一行统计 + 仅有的两个入口。
+ * 副标题不写产品口号，写"一共存了多少课"——这是用户唯一会在意的横向信息。
+ */
+@Composable
+private fun HomeHeader(
+    totalCount: Int,
+    totalMs: Long,
+    courseName: String?,
+    onOpenRecycle: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 8.dp, top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "随堂录",
+                style = MaterialTheme.typography.headlineMedium.copy(fontSize = 23.sp),
+            )
+            Text(
+                summaryLine(totalCount, totalMs, courseName),
+                style = MaterialTheme.typography.labelMedium.tabularNumbers(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 1.dp),
+            )
+        }
+        // 回收站不是"删除"：用还原图标，避免看成一个清空按钮
+        IconButton(onClick = onOpenRecycle) {
+            Icon(
+                Icons.Outlined.RestoreFromTrash,
+                contentDescription = "回收站",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onOpenSettings) {
+            Icon(
+                Icons.Filled.Settings,
+                contentDescription = "设置",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** "高等数学 · 12 条 · 共 9 小时 24 分"；没有录音时不显示这条 */
+private fun summaryLine(totalCount: Int, totalMs: Long, courseName: String?): String {
+    if (totalCount == 0) return "课堂录音 · 拍照标记 · AI 讲解"
+    val hours = totalMs / 3_600_000
+    val minutes = (totalMs % 3_600_000) / 60_000
+    val duration = when {
+        hours > 0 && minutes > 0 -> "$hours 小时 $minutes 分"
+        hours > 0 -> "$hours 小时"
+        else -> "$minutes 分钟"
+    }
+    return buildString {
+        if (!courseName.isNullOrBlank()) {
+            append(courseName)
+            append(" · ")
+        }
+        append("$totalCount 条录音 · 共 $duration")
+    }
+}
+
+@Composable
+private fun SelectionHeader(
+    count: Int,
+    onExit: () -> Unit,
+    onSelectAll: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = 8.dp, top = 10.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onExit) {
+            Icon(Icons.Filled.Close, contentDescription = "退出选择")
+        }
+        Text(
+            "已选 $count 项",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onSelectAll) { Text("全选") }
+        TextButton(onClick = onDelete, enabled = count > 0) { Text("移入回收站") }
+    }
+}
+
+/** 日期分组头：日期 + 一条贯穿到右边的细线，替代卡片分组的视觉重量 */
+@Composable
+private fun GroupHeader(label: String, weekday: String, count: Int) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.alignByBaseline(),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            weekday,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.alignByBaseline(),
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            "$count 条",
+            style = MaterialTheme.typography.labelSmall.tabularNumbers(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.alignByBaseline(),
+        )
+    }
+}
+
+/**
+ * 时间轴行：左列是时间（找录音的第一线索），中间是轴与课程色节点，右侧是标题与讲解进度。
+ * 不用卡片：卡片会把每条录音切成互相独立的方块，这里要的是一条连续的"课堂记录"。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecordingCard(
+private fun TimelineRow(
+    modifier: Modifier = Modifier,
     item: HomeItem,
+    isFirst: Boolean,
+    isLast: Boolean,
     selectionMode: Boolean,
     selected: Boolean,
     onToggleSelect: () -> Unit,
@@ -476,156 +754,221 @@ private fun RecordingCard(
     val rec = item.recording
     val isRecording = rec.status == Recording.STATUS_RECORDING
     val audioDeleted = rec.status == Recording.STATUS_AUDIO_DELETED
-    val shape = MaterialTheme.shapes.large
-    Card(
-        modifier = Modifier
+    val nodeColor = courseColor(rec.courseName) ?: MaterialTheme.colorScheme.outline
+    val lineColor = MaterialTheme.colorScheme.outlineVariant
+    val gapColor = MaterialTheme.colorScheme.background
+    val shape = RoundedCornerShape(10.dp)
+
+    Row(
+        modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .then(
-                if (selected) {
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
-                } else {
-                    Modifier
+            .height(RowHeight)
+            .padding(horizontal = 8.dp)
+            .background(
+                when {
+                    selected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                    else -> Color.Transparent
                 },
+                shape,
             )
             .combinedClickable(
                 onClick = { if (selectionMode) onToggleSelect() else onClick() },
                 onLongClick = { if (!selectionMode) onLongPress() },
-            ),
-        shape = shape,
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                selected -> MaterialTheme.colorScheme.primaryContainer
-                isRecording -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-                else -> MaterialTheme.colorScheme.surface
-            },
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 0.dp else 1.dp),
+            )
+            .padding(start = 12.dp),
     ) {
-        Column(Modifier.padding(16.dp)) {
+        // 时间列
+        Column(Modifier.width(TimeColumnWidth).padding(top = 12.dp)) {
+            Text(
+                Formatters.timeOnly(rec.startTime),
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp).tabularNumbers(),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                if (audioDeleted) "音频已删" else Formatters.durationShort(rec.durationMs),
+                style = MaterialTheme.typography.labelSmall.tabularNumbers(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+
+        // 轴：一段竖线 + 一个课程色节点；首行上端、末行下端留白，线不会戳出分组
+        Canvas(Modifier.width(AxisWidth).fillMaxHeight()) {
+            val x = 4.dp.toPx()
+            val centerY = NodeCenterY.toPx()
+            val top = if (isFirst) centerY else 0f
+            val bottom = if (isLast) centerY else size.height
+            drawLine(
+                color = lineColor,
+                start = Offset(x, top),
+                end = Offset(x, bottom),
+                strokeWidth = 1.dp.toPx(),
+            )
+            // 背景色描边把线与节点隔开
+            drawCircle(gapColor, radius = 6.dp.toPx(), center = Offset(x, centerY))
+            drawCircle(nodeColor, radius = 4.dp.toPx(), center = Offset(x, centerY))
+        }
+
+        // 内容
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(start = 4.dp, top = 12.dp, end = 2.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
                     Icon(
                         if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
                         contentDescription = if (selected) "已选中" else "未选中",
-                        tint = if (selected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(22.dp),
+                        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
                     )
-                    Spacer(Modifier.width(10.dp))
-                } else {
-                    // 课程色点：同课程同色，扫一眼对上课
-                    val dotColor = courseColor(rec.courseName)
-                    if (dotColor != null) {
-                        Box(
-                            Modifier
-                                .size(10.dp)
-                                .background(dotColor, CircleShape),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
+                    Spacer(Modifier.width(6.dp))
                 }
                 Text(
                     rec.title,
                     style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                if (!selectionMode) {
-                    Box {
-                        IconButton(onClick = onMenuClick, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                Icons.Filled.MoreVert,
-                                contentDescription = "更多操作",
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        DropdownMenu(expanded = menuVisible, onDismissRequest = onDismissMenu) {
-                            DropdownMenuItem(
-                                text = { Text("重命名") },
-                                leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, null) },
-                                onClick = onRename,
-                            )
-                            DropdownMenuItem(
-                                text = { Text("删除到回收站") },
-                                leadingIcon = { Icon(Icons.Filled.Delete, null) },
-                                onClick = onDelete,
-                            )
-                            DropdownMenuItem(text = { Text("仅删除录音文件") }, onClick = onDeleteAudioOnly)
-                            DropdownMenuItem(
-                                text = { Text("导出单条录音") },
-                                leadingIcon = { Icon(Icons.Filled.IosShare, null) },
-                                onClick = onExport,
-                            )
-                        }
-                    }
-                }
+            }
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isRecording) {
                     RecordingPulseDot()
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "录制中",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                } else if (audioDeleted) {
-                    Icon(
-                        Icons.Filled.Warning,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(16.dp),
-                    )
+                    Spacer(Modifier.width(5.dp))
                 }
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                buildString {
-                    append(Formatters.timeOnly(rec.startTime))
-                    append(" · ")
-                    append(Formatters.duration(rec.durationMs))
-                    if (!audioDeleted) {
-                        append(" · ")
-                        append(
-                            when {
-                                item.markerTotal == 0 -> "无标记"
-                                item.markerFailed > 0 ->
-                                    "${item.markerTotal} 标记 · ${item.markerSuccess} 成功 ${item.markerFailed} 失败"
-                                else -> "${item.markerTotal} 标记"
-                            },
-                        )
-                    }
-                },
-                style = MaterialTheme.typography.bodySmall.tabularNumbers(),
-                color = if (isRecording) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (item.markerFailed > 0) {
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    subtitleOf(item, isRecording, audioDeleted),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (item.markerFailed > 0 && !audioDeleted) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (item.markerFailed > 0 && !audioDeleted) {
+                    Spacer(Modifier.width(4.dp))
                     Icon(
                         Icons.Filled.Warning,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        "有标记未发送，可重发",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(12.dp),
                     )
                 }
             }
         }
+
+        // 更多操作
+        if (!selectionMode) {
+            Box(Modifier.width(40.dp).fillMaxHeight()) {
+                IconButton(
+                    onClick = onMenuClick,
+                    modifier = Modifier.align(Alignment.Center).size(40.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                DropdownMenu(expanded = menuVisible, onDismissRequest = onDismissMenu) {
+                    DropdownMenuItem(
+                        text = { Text("重命名") },
+                        leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, null) },
+                        onClick = onRename,
+                    )
+                    DropdownMenuItem(
+                        text = { Text("删除到回收站") },
+                        leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                        onClick = onDelete,
+                    )
+                    DropdownMenuItem(text = { Text("仅删除录音文件") }, onClick = onDeleteAudioOnly)
+                    DropdownMenuItem(
+                        text = { Text("导出单条录音") },
+                        leadingIcon = { Icon(Icons.Filled.IosShare, null) },
+                        onClick = onExport,
+                    )
+                }
+            }
+        } else {
+            Spacer(Modifier.width(8.dp))
+        }
+    }
+}
+
+/** 副标题只回答"这节课的讲解进度"，不再堆时间/时长 */
+private fun subtitleOf(item: HomeItem, isRecording: Boolean, audioDeleted: Boolean): String = when {
+    isRecording -> "录制中"
+    audioDeleted -> "音频已删除 · 标记与讲解仍在"
+    item.markerTotal == 0 -> "无标记"
+    item.markerFailed == 0 -> "${item.markerTotal} 个标记 · 全部已讲解"
+    else -> "${item.markerTotal} 个标记 · ${item.markerFailed} 个讲解失败"
+}
+
+@Composable
+private fun CourseFilterChip(
+    label: String,
+    selected: Boolean,
+    dotColor: Color?,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = dotColor?.let {
+            {
+                Box(Modifier.size(7.dp).background(it, CircleShape))
+            }
+        },
+        shape = RoundedCornerShape(10.dp),
+    )
+}
+
+@Composable
+private fun EmptyState() {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // 与应用图标同一母题（五段声波），空页面也保持品牌一致
+        val barColor = MaterialTheme.colorScheme.primary
+        Canvas(Modifier.size(width = 132.dp, height = 56.dp)) {
+            val heights = listOf(0.34f, 0.62f, 1f, 0.52f, 0.30f)
+            val alphas = listOf(0.22f, 0.45f, 0.95f, 0.45f, 0.22f)
+            val barWidth = 8.dp.toPx()
+            val gap = 10.dp.toPx()
+            val totalWidth = heights.size * barWidth + (heights.size - 1) * gap
+            var x = (size.width - totalWidth) / 2f
+            heights.forEachIndexed { index, ratio ->
+                val h = size.height * ratio
+                drawRoundRect(
+                    color = barColor.copy(alpha = alphas[index]),
+                    topLeft = Offset(x, (size.height - h) / 2f),
+                    size = Size(barWidth, h),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                )
+                x += barWidth + gap
+            }
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("还没有录音", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "上课时点右下角「开始录音」，遇到重点拍照标记。\n录音结束后会自动把图片发给 AI 讲解。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
     }
 }
 
@@ -641,7 +984,7 @@ private fun RecordingPulseDot() {
     )
     Box(
         Modifier
-            .size(8.dp)
+            .size(7.dp)
             .background(MaterialTheme.colorScheme.error.copy(alpha = alpha), CircleShape),
     )
 }
@@ -668,7 +1011,7 @@ private fun RecordingBanner(onClick: () -> Unit) {
     )
     Card(
         onClick = onClick,
-        shape = MaterialTheme.shapes.large,
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier
@@ -702,7 +1045,7 @@ private fun RecordingBanner(onClick: () -> Unit) {
                 )
                 Text(
                     Formatters.duration(s.elapsedMs) + " · 点击返回录音页",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelMedium.tabularNumbers(),
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
                 )
             }

@@ -5,10 +5,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +20,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Pause
@@ -56,6 +63,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,6 +71,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -70,22 +81,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.suitanglu.app.data.CameraMode
+import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.service.RecordingBus
 import com.suitanglu.app.service.RecordingService
 import com.suitanglu.app.ui.theme.BrandAccent
+import com.suitanglu.app.ui.theme.tabularNumbers
 import java.io.File
+import kotlin.math.cos
+import kotlin.math.sin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -221,93 +236,146 @@ fun RecordingScreen(
         return
     }
 
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(s.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(4.dp))
-        AnimatedContent(
-            targetState = Triple(s.interrupted, s.paused, s.interruptReason),
-            label = "status",
-            transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(200)) },
-        ) { (interrupted, paused, reason) ->
-            Text(
-                when {
-                    interrupted -> "已被打断（${reason ?: "未知原因"}），音频焦点恢复后自动继续"
-                    paused -> "已暂停"
-                    else -> "正在录音"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (interrupted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.height(28.dp))
-
-        RecordingRing(
-            elapsedMs = s.elapsedMs,
-            paused = s.paused,
-            interrupted = s.interrupted,
-            modifier = Modifier.size(260.dp),
-        )
-
-        Spacer(Modifier.height(24.dp))
-        Text(
-            vm.aiStatusSummary(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(28.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            // 次要操作：暂停/继续，低饱和实心
-            FilledIconButton(
-                onClick = { vm.pauseOrResume() },
-                modifier = Modifier.size(60.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-            ) {
-                Icon(
-                    if (s.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                    contentDescription = if (s.paused) "继续" else "暂停",
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-            // 危险操作：停止。用描边而非大红实心，避免抢走「拍照并标记」的主角位；
-            // 点击后仍有确认弹窗，误触不会直接结束录音。
-            OutlinedIconButton(
-                onClick = { showStopConfirm = true },
-                modifier = Modifier.size(60.dp),
-                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.55f)),
-                colors = IconButtonDefaults.outlinedIconButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error,
-                ),
-            ) {
-                Icon(
-                    Icons.Filled.Stop,
-                    contentDescription = "停止",
-                    modifier = Modifier.size(26.dp),
-                )
-            }
-        }
-
-        Spacer(Modifier.height(28.dp))
-        Button(
-            onClick = {
-                if (!hasCameraPermission && general.cameraMode != CameraMode.SYSTEM) {
-                    onRequestPermissions()
-                    return@Button
-                }
-                showMarkerSheet = true
-            },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(Icons.Filled.PhotoCamera, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("拍照并标记（已 $markerCount 个）")
+            // 顶部：返回不打断录音（服务仍在跑，首页有横幅可回来）。
+            // 副标题单独一行并与标题左缘对齐——两行文字夹一个返回箭头会显得箭头没对齐
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { onFinished(s.recordingId) }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回首页（继续录音）")
+                }
+                Text(
+                    s.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                "${Formatters.timeOnly(s.startTime)} 开始 · 已录 ${Formatters.durationShort(s.elapsedMs)}",
+                style = MaterialTheme.typography.labelMedium.tabularNumbers(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(start = 48.dp, bottom = 4.dp),
+            )
+
+            // 环与它下面那组信息作为一个整体居中：信息贴着环，留白集中到控制区上方，
+            // 而不是让"讲到第几张"孤零零漂在屏幕中间
+            Box(
+                Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    SoundPrintRing(
+                        elapsedMs = s.elapsedMs,
+                        level = s.level,
+                        paused = s.paused,
+                        interrupted = s.interrupted,
+                        modifier = Modifier.size(292.dp),
+                    )
+                    Spacer(Modifier.height(22.dp))
+                    // 这一行是"这节课进行到哪"的答案：讲解进度 + 标记数
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "已标记 $markerCount 个",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("·", color = MaterialTheme.colorScheme.outline)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            vm.aiStatusSummary(),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    // 环的图例：不解释的话它就是一圈没来由的刻度
+                    Text(
+                        "最近 60 秒 · 每根条 1 秒，长度是那一秒的音量",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    )
+                }
+            }
+
+            // 打断原因写全：环中心只放得下"录音被打断"四个字
+            if (s.interrupted) {
+                Text(
+                    "已被打断${s.interruptReason?.let { "（$it）" } ?: ""}，音频焦点恢复后自动继续",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                // 次要操作：暂停/继续，低饱和实心
+                FilledIconButton(
+                    onClick = { vm.pauseOrResume() },
+                    modifier = Modifier.size(60.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ),
+                ) {
+                    Icon(
+                        if (s.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                        contentDescription = if (s.paused) "继续" else "暂停",
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+                // 危险操作：淡红底 + 红描边。纯描边太轻（比暂停还弱），
+                // 实心大红又会抢走「拍照并标记」的主角位，取中间一档
+                IconButton(
+                    onClick = { showStopConfirm = true },
+                    modifier = Modifier
+                        .size(60.dp)
+                        .border(
+                            1.5.dp,
+                            MaterialTheme.colorScheme.error.copy(alpha = 0.5f),
+                            CircleShape,
+                        )
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.08f), CircleShape),
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Icon(
+                        Icons.Filled.Stop,
+                        contentDescription = "停止",
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Button(
+                onClick = {
+                    if (!hasCameraPermission && general.cameraMode != CameraMode.SYSTEM) {
+                        onRequestPermissions()
+                        return@Button
+                    }
+                    showMarkerSheet = true
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+            ) {
+                Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (markerCount == 0) "拍照并标记" else "拍照并标记（已 $markerCount 个）")
+            }
+            Spacer(Modifier.height(10.dp))
         }
     }
 
@@ -428,75 +496,178 @@ fun RecordingScreen(
     }
 }
 
-/** 圆环计时：60 秒循环进度弧 + 录音中呼吸外环；暂停静止变灰、被打断变红 */
+/** 一圈 60 根条 = 最近 60 秒 */
+private const val RingSegments = 60
+
+/**
+ * 声纹环：每一秒一根条，条长 = 那一秒的音量峰值。
+ *
+ * 一根条同时承担两件事——走到哪了（已录的条是品牌绿，未录是浅灰短桩）、
+ * 讲得多大声（条的长度）。比"进度弧 + 秒刻度"两套同心刻度叠在一起更干净，
+ * 也让录音页有了别的录音 App 没有的东西：一眼看出哪几秒没人说话。
+ */
 @Composable
-private fun RecordingRing(
+private fun SoundPrintRing(
     elapsedMs: Long,
+    level: Float,
     paused: Boolean,
     interrupted: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val trackColor = MaterialTheme.colorScheme.surfaceVariant
-    val activeColor = if (interrupted) MaterialTheme.colorScheme.error else BrandAccent()
-    val ringColor = if (paused) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f) else activeColor
+    val levels = remember { mutableStateListOf<Float>().apply { repeat(RingSegments) { add(0f) } } }
+    var slotSec by remember { mutableIntStateOf(-1) }
+    var slotPeak by remember { mutableFloatStateOf(0f) }
 
-    val breath = rememberInfiniteTransition(label = "breath")
-    val breathAlpha by breath.animateFloat(
-        initialValue = 0.10f,
-        targetValue = 0.30f,
-        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing)),
-        label = "breathAlpha",
-    )
-    val breathRadius by breath.animateFloat(
-        initialValue = 1.03f,
-        targetValue = 1.10f,
-        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing)),
-        label = "breathRadius",
-    )
-    val showBreath = !paused && !interrupted
-    val effAlpha = if (showBreath) breathAlpha else 0.12f
-    val effRadius = if (showBreath) breathRadius else 1.06f
+    val elapsedSec = (elapsedMs / 1000).toInt()
+    val current = elapsedSec % RingSegments
+
+    // 秒数变化时先清掉 60 秒前留在同一槽位的旧值，再把这一秒内的峰值实时写回去
+    LaunchedEffect(elapsedSec, level, paused, interrupted) {
+        if (elapsedSec != slotSec) {
+            slotSec = elapsedSec
+            slotPeak = 0f
+            levels[current] = 0f
+        }
+        if (!paused && !interrupted) {
+            slotPeak = maxOf(slotPeak, level)
+            levels[current] = slotPeak
+        }
+    }
+
+    val snapshot = levels.toList()
+    val activeColor = if (interrupted) MaterialTheme.colorScheme.error else BrandAccent()
+    val pastColor = if (paused) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f) else activeColor
+    val futureColor = MaterialTheme.colorScheme.outlineVariant
+    val muted = paused || interrupted
+
+    // 当前这根条跟随实时音量：用可中断的动画推进，而不是每 500ms 硬跳一格
+    val vu = remember { Animatable(0f) }
+    LaunchedEffect(level, muted) {
+        vu.animateTo(
+            targetValue = if (muted) 0f else level,
+            animationSpec = tween(durationMillis = 260, easing = LinearOutSlowInEasing),
+        )
+    }
 
     Box(modifier, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val stroke = 14.dp.toPx()
-            val radius = (size.minDimension - stroke * 3) / 2f
-            val center = Offset(size.width / 2, size.height / 2)
-            // 呼吸外环
-            drawCircle(
-                color = activeColor.copy(alpha = effAlpha),
-                radius = radius * effRadius,
-                center = center,
-                style = Stroke(stroke * 0.7f),
+            val baseRadius = size.minDimension / 2f - 34.dp.toPx()
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            // 起点刻线（12 点方向）：没有它，这一圈刻度就是没有起止的装饰
+            drawLine(
+                color = futureColor,
+                start = Offset(cx, cy - baseRadius + 4.dp.toPx()),
+                end = Offset(cx, cy - baseRadius + 16.dp.toPx()),
+                strokeWidth = 2.dp.toPx(),
+                cap = StrokeCap.Round,
             )
-            // 轨道
-            drawCircle(
-                color = trackColor,
-                radius = radius,
-                center = center,
-                style = Stroke(stroke),
-            )
-            // 60 秒循环进度
-            val sweep = (elapsedMs % 60_000) / 60_000f * 360f
-            drawArc(
-                color = ringColor,
-                startAngle = -90f,
-                sweepAngle = sweep,
-                useCenter = false,
-                topLeft = Offset(center.x - radius, center.y - radius),
-                size = Size(radius * 2, radius * 2),
-                style = Stroke(stroke, cap = StrokeCap.Round),
-            )
+            for (i in 0 until RingSegments) {
+                val angle = Math.toRadians((i * 6 - 90).toDouble())
+                val dx = cos(angle).toFloat()
+                val dy = sin(angle).toFloat()
+                val isCurrent = i == current
+                val isPast = if (elapsedSec < RingSegments) i < current else !isCurrent
+
+                val barLen: Float
+                val barAlpha: Float
+                val barWidth: Float
+                val barColor: Color
+                when {
+                    isPast -> {
+                        val lvl = snapshot[i]
+                        barLen = 7f + lvl * 21f
+                        barAlpha = 0.30f + lvl * 0.60f
+                        barWidth = 3.2f
+                        barColor = pastColor
+                    }
+                    isCurrent -> {
+                        barLen = maxOf(10f, 7f + vu.value * 21f)
+                        barAlpha = if (muted) 0.55f else 1f
+                        barWidth = 3.6f
+                        barColor = pastColor
+                    }
+                    else -> {
+                        barLen = 8f
+                        barAlpha = 0.85f
+                        barWidth = 2.4f
+                        barColor = futureColor
+                    }
+                }
+                val startR = baseRadius
+                val endR = baseRadius + barLen.dp.toPx()
+                drawLine(
+                    color = barColor.copy(alpha = barColor.alpha * barAlpha),
+                    start = Offset(cx + dx * startR, cy + dy * startR),
+                    end = Offset(cx + dx * endR, cy + dy * endR),
+                    strokeWidth = barWidth.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 formatTimer(elapsedMs),
-                style = MaterialTheme.typography.headlineLarge.copy(fontFeatureSettings = "tnum"),
+                style = MaterialTheme.typography.headlineLarge.copy(fontSize = 34.sp).tabularNumbers(),
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val targetDot = if (paused) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+                // 颜色跟着状态渐变，不硬切
+                val dotColor by animateColorAsState(
+                    targetValue = targetDot,
+                    animationSpec = tween(220),
+                    label = "recDotColor",
+                )
+                RecordingDot(color = dotColor, animated = !paused)
+                Spacer(Modifier.width(7.dp))
+                val statusText = when {
+                    interrupted -> "录音被打断"
+                    paused -> "已暂停"
+                    else -> "正在录音"
+                }
+                // 状态是低频变化，用交叉淡入而不是硬切；退出比进入短，符合"注意力在进入"
+                AnimatedContent(
+                    targetState = statusText,
+                    transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(120)) },
+                    label = "recStatus",
+                ) { text ->
+                    Text(
+                        text,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (interrupted) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
         }
     }
+}
+
+/** 呼吸小圆点：录音中脉动，暂停/打断时静止 */
+@Composable
+private fun RecordingDot(color: Color, animated: Boolean) {
+    val alpha = if (animated) {
+        val pulse = rememberInfiniteTransition(label = "recDot")
+        val a by pulse.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse),
+            label = "recDotAlpha",
+        )
+        a
+    } else {
+        0.9f
+    }
+    Box(Modifier.size(6.dp).background(color.copy(alpha = alpha), CircleShape))
 }
 
 private fun formatTimer(ms: Long): String {
