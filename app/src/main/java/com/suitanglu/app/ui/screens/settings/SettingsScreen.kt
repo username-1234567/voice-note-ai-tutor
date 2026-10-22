@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -16,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.TextFormat
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,14 +34,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.suitanglu.app.data.CameraMode
 import com.suitanglu.app.update.UpdateConfig
@@ -54,25 +56,36 @@ fun SettingsScreen(
     onOpenSchedule: () -> Unit,
     onOpenAi: () -> Unit,
     onOpenData: () -> Unit,
+    onOpenRender: () -> Unit,
 ) {
     val vm: SettingsViewModel = viewModel()
     val general by vm.generalConfig.collectAsState()
     val ai by vm.aiConfig.collectAsState()
     val updateState by vm.updateState.collectAsState()
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
+    // 这里曾经挂过 exitUntilCollapsedScrollBehavior + nestedScroll，但顶栏是自绘的 Row，
+    // 没有把 behavior 交给 TopAppBar，导致 heightOffsetLimit 一直是初值 NaN，
+    // nestedScrollConnection 会把每一次上滑距离全部吃掉 —— 表现就是"设置页划不动"。
+    // 顶栏本来也是固定的 23sp 标题，不需要折叠行为，直接去掉。
     Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = Modifier.imePadding(),
         topBar = {
-            LargeTopAppBar(
-                title = { Text("设置") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                scrollBehavior = scrollBehavior,
-            )
+            // 索引页是"一级页面"，标题与首页同级（23sp），不再用会缩放的 LargeTopAppBar
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 4.dp, end = 16.dp, top = 2.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                }
+                Text(
+                    "设置",
+                    style = MaterialTheme.typography.headlineMedium.copy(fontSize = 23.sp),
+                )
+            }
         },
     ) { padding ->
         Column(
@@ -106,6 +119,14 @@ fun SettingsScreen(
                     icon = Icons.Outlined.FolderOpen,
                     tint = MaterialTheme.colorScheme.secondary,
                     onClick = onOpenData,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingsEntry(
+                    title = "渲染预览",
+                    subtitle = "把 Markdown/LaTeX 原文贴进来，看排版后的效果",
+                    icon = Icons.Outlined.TextFormat,
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = onOpenRender,
                 )
             }
 

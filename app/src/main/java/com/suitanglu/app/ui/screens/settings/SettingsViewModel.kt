@@ -50,18 +50,21 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         refreshStorage()
     }
 
+    // 保存走 appScope 而不是 viewModelScope：点完保存立刻按返回时，
+    // viewModelScope 会随页面销毁而取消，DataStore 写入可能被丢掉——
+    // 表现就是"明明点了保存，回来发现没生效"。同文件里的导入导出也是这个理由。
     fun saveAi(config: AiConfig) {
-        viewModelScope.launch { container.settings.setAiConfig(config) }
+        container.appScope.launch { container.settings.setAiConfig(config) }
     }
 
     fun saveGeneral(config: GeneralConfig) {
-        viewModelScope.launch { container.settings.setGeneralConfig(config) }
+        container.appScope.launch { container.settings.setGeneralConfig(config) }
     }
 
     /** 测试连接 = 先保存界面上的配置，再用同一份配置测试，一步到位 */
     fun saveAndTestAi(config: AiConfig) {
+        container.appScope.launch { container.settings.setAiConfig(config) }
         viewModelScope.launch {
-            container.settings.setAiConfig(config)
             _aiTesting.value = true
             _aiTestResult.value = try {
                 com.suitanglu.app.ai.DeepSeekClient(config).testConnection()

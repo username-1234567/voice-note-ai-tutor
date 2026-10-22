@@ -56,23 +56,39 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     /** 裁剪输出是 FileProvider 的 content:// Uri，统一复制到待用目录再使用 */
     fun addCroppedImage(uri: Uri) {
         viewModelScope.launch {
-            val target = withContext(Dispatchers.IO) {
-                val dir = File(getApplication<Application>().cacheDir, "pending").apply { mkdirs() }
-                val f = File(dir, "P_${System.currentTimeMillis()}.jpg")
-                runCatching {
-                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
-                        f.outputStream().use { input.copyTo(it) }
-                    }
-                }
-                if (f.exists() && f.length() > 0) f else null
-            } ?: return@launch
+            val target = withContext(Dispatchers.IO) { copyToPending(uri) } ?: return@launch
             _pendingImages.value = _pendingImages.value + target
         }
+    }
+
+    /** 把 content:// 或 file:// 复制成缓存里的独立文件，供后续移动入库 */
+    private fun copyToPending(uri: Uri): File? {
+        val app = getApplication<Application>()
+        val dir = File(app.cacheDir, "pending").apply { mkdirs() }
+        // 纳秒后缀：连续两次快拍可能落在同一毫秒里
+        val f = File(dir, "P_${System.currentTimeMillis()}_${System.nanoTime() % 1000}.jpg")
+        runCatching {
+            app.contentResolver.openInputStream(uri)?.use { input ->
+                f.outputStream().use { input.copyTo(it) }
+            }
+        }
+        return if (f.exists() && f.length() > 0) f else null
     }
 
     fun removePending(file: File) {
         _pendingImages.value = _pendingImages.value - file
         file.delete()
+    }
+
+    /**
+     * 关掉标记面板但没保存：把暂存的图片扔掉。
+     *
+     * 不扔的话它们会一直躺在 `_pendingImages` 里，等下一次保存时跟着一起入库——
+     * 用户会看到一张自己以为已经放弃的照片出现在新标记里。
+     */
+    fun discardPending() {
+        _pendingImages.value.forEach { runCatching { it.delete() } }
+        _pendingImages.value = emptyList()
     }
 
     /** 保存标记：图片移动到 images 目录，立即入库 */
@@ -87,25 +103,71 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
             onDone(false)
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            val imagesDir = container.recordingRepository.imagesDir
-            val moved = images.map { f ->
-                val target = File(imagesDir, "marker_${state.recordingId}_${System.currentTimeMillis()}_${f.name.hashCode()}.jpg")
-                if (f.renameTo(target)) target else {
-                    f.copyTo(target, overwrite = true); f.delete(); target
-                }
+        persistMarker(state.recordingId, state.elapsedMs, images, text, clearPending = true, onDone)
+    }
+
+    /**
+     * 长按快拍：拍完直接入库，不裁剪、不写字。
+     *
+     * 刻意只保存自己这一张，不走 pendingImages——那条路会把"上次拍完没保存就关掉面板"的图
+     * 一起卷进来，用户以为是新标记，其实带了一张旧的。
+     */
+    fun saveQuickMarker(uri: Uri, onDone: (Boolean) -> Unit) {
+        val state = RecordingBus.state.value
+        if (state == null) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val target = withContext(Dispatchers.IO) { copyToPending(uri) } ?: run {
+                onDone(false)
+                return@launch
             }
-            container.recordingRepository.saveMarker(
-                recordingId = state.recordingId,
-                offsetMs = state.elapsedMs,
-                userText = text.trim().takeIf { it.isNotEmpty() },
-                imageFiles = moved,
-            )
-            withContext(Dispatchers.Main) {
-                _pendingImages.value = emptyList()
+            persistMarker(state.recordingId, state.elapsedMs, listOf(target), "", clearPending = false, onDone)
+        }
+    }
+
+    /** 把缓存文件搬到 images 目录并落库；[clearPending] 决定是否清空面板里暂存的图片 */
+    private fun persistMarker(
+        recordingId: Long,
+        offsetMs: Long,
+        images: List<File>,
+        text: String,
+        clearPending: Boolean,
+        onDone: (Boolean) -> Unit,
+    ) {
+        viewModelScope.launch {
+            // 文件可能在这期间被 discardPending 删掉（保存中关面板），
+            // 不包起来的话异常会直接冒到 viewModelScope 上，标记创建静默失败
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val imagesDir = container.recordingRepository.imagesDir
+                    val moved = images.map { f ->
+                        val target = File(
+                            imagesDir,
+                            "marker_${recordingId}_${System.currentTimeMillis()}_${f.name.hashCode()}.jpg",
+                        )
+                        if (f.renameTo(target)) {
+                            target
+                        } else {
+                            f.copyTo(target, overwrite = true)
+                            f.delete()
+                            target
+                        }
+                    }
+                    container.recordingRepository.saveMarker(
+                        recordingId = recordingId,
+                        offsetMs = offsetMs,
+                        userText = text.trim().takeIf { it.isNotEmpty() },
+                        imageFiles = moved,
+                    )
+                }.isSuccess
+            }
+            if (ok) {
+                if (clearPending) _pendingImages.value = emptyList()
                 _markerCount.value += 1
-                onDone(true)
             }
+            onDone(ok)
         }
     }
 
@@ -127,7 +189,7 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         val count = _markerCount.value
         return when {
             count == 0 -> "尚无标记"
-            else -> "$count 个标记，录音结束后将自动发送 AI 讲解"
+            else -> "$count 个标记，课后确认图片后到回放页手动发送"
         }
     }
 

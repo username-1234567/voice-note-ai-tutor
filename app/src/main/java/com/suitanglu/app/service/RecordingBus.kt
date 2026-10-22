@@ -27,8 +27,23 @@ object RecordingBus {
     private val _startError = MutableStateFlow<String?>(null)
     val startError: StateFlow<String?> = _startError
 
+    /**
+     * 录音过程中的一次性提醒（目前只有"长时间没声音"）。
+     * UI 消费后必须调 [clearLevelWarning]，否则重组时会重复弹。
+     */
+    private val _levelWarning = MutableStateFlow<String?>(null)
+    val levelWarning: StateFlow<String?> = _levelWarning
+
     fun update(state: RecordingState?) {
         _state.value = state
+    }
+
+    fun setLevelWarning(message: String) {
+        _levelWarning.value = message
+    }
+
+    fun clearLevelWarning() {
+        _levelWarning.value = null
     }
 
     fun setStartError(message: String) {

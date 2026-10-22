@@ -53,6 +53,8 @@ class RecordApp : Application() {
             val dao = container.db.recordingDao()
             // 进程被杀时中断的 AI 发送置为失败，避免永远卡在“发送中”
             container.db.markerDao().resetSending(System.currentTimeMillis())
+            // 请求日志每次生成都会写一条，只在启动时收一次，避免数据库无限膨胀
+            runCatching { container.db.aiRequestLogDao().trim(200) }
             val unfinished = dao.getUnfinished()
             for (rec in unfinished) {
                 val markers = container.db.markerDao().countByRecording(rec.id)
@@ -64,12 +66,11 @@ class RecordApp : Application() {
                 container.db.withTransaction {
                     dao.update(fixed)
                 }
-                // 与正常停止一致：有待发送标记的恢复录音纳入自动发送（有网络约束，无网会等待）
-                if (container.db.markerDao().countUnsent(rec.id) > 0) {
-                    container.aiSendManager.enqueueAutoSend(rec.id)
-                }
             }
+            // 只在收尾调一次：放进循环里的话，恢复 3 条会通知 4 次
             if (unfinished.isNotEmpty()) {
+                // 与正常停止一致：恢复出来的录音也**不**自动发送。
+                // 标记留在待发送状态，用户在回放页确认图片后手动发。
                 container.recordingRepository.notifyRecovered(unfinished.size)
             }
         }

@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.suitanglu.app.AppGraph
 import com.suitanglu.app.ui.nav.RecordNavHost
+import com.suitanglu.app.ui.components.AppAlertDialog
 import com.suitanglu.app.ui.theme.RecordTheme
 import java.security.MessageDigest
 
@@ -85,34 +86,29 @@ class MainActivity : ComponentActivity() {
             RecordTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     if (signatureBlocked) {
-                        AlertDialog(
-                            onDismissRequest = {},
-                            title = { Text("应用签名异常") },
-                            text = {
-                                Text(
-                                    "当前安装包与官方发布签名不一致，可能已被篡改。" +
-                                        "为保护录音、照片与 AI 配置安全，应用已停止运行。" +
-                                        "请卸载后从官方 GitHub Releases 重新安装。",
-                                )
-                            },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    runCatching {
-                                        startActivity(
-                                            android.content.Intent(
-                                                android.content.Intent.ACTION_VIEW,
-                                                android.net.Uri.parse(
-                                                    "https://github.com/username-1234567/voice-note-ai-tutor/releases/latest",
-                                                ),
+                        AppAlertDialog(
+                            title = "应用签名异常",
+                            message = "当前安装包与官方发布签名不一致，可能已被篡改。" +
+                                "为保护录音、照片与 AI 配置安全，应用已停止运行。" +
+                                "请卸载后从官方 GitHub Releases 重新安装。",
+                            confirmLabel = "前往官方下载",
+                            destructive = true,
+                            showIcon = true,
+                            onConfirm = {
+                                runCatching {
+                                    startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(
+                                                "https://github.com/username-1234567/voice-note-ai-tutor/releases/latest",
                                             ),
-                                        )
-                                    }
-                                    finishAffinity()
-                                }) { Text("前往官方下载") }
+                                        ),
+                                    )
+                                }
+                                finishAffinity()
                             },
-                            dismissButton = {
-                                TextButton(onClick = { finishAffinity() }) { Text("退出") }
-                            },
+                            dismissLabel = "退出",
+                            onDismissRequest = { finishAffinity() },
                         )
                     } else {
                         RecordNavHost(

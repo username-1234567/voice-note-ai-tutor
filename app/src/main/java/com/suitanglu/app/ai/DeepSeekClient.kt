@@ -62,6 +62,10 @@ class DeepSeekClient(
         return if (b.endsWith("/chat/completions")) b else "$b/chat/completions"
     }
 
+    /** 只有官方端点认 thinking / reasoning_effort，其他 OpenAI 兼容服务下发会被拒 */
+    private fun supportsThinking(): Boolean =
+        base().contains("deepseek", ignoreCase = true)
+
     private fun client(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(config.timeoutSeconds.coerceAtLeast(30).toLong(), TimeUnit.SECONDS)
@@ -115,6 +119,18 @@ class DeepSeekClient(
                         },
                     )
                     put("stream", config.stream)
+                    // 思考强度：只在官方端点上发。
+                    // 第三方 OpenAI 兼容服务大多不认 thinking / reasoning_effort，硬塞会被 400 掉，
+                    // 所以按 host 判断，而不是让用户再配一个"兼容模式"开关。
+                    // 注意 thinking 默认是开启的——想关必须显式下发 disabled，不发参数等于没关。
+                    if (supportsThinking()) {
+                        val effort = config.reasoningEffort.lowercase()
+                        put(
+                            "thinking",
+                            buildJsonObject { put("type", if (effort == "off") "disabled" else "enabled") },
+                        )
+                        if (effort != "off") put("reasoning_effort", effort)
+                    }
                     // 0 = 不限制（模型按自身上限输出），避免长回复被截断
                     if (config.maxTokens > 0) put("max_tokens", config.maxTokens.coerceAtLeast(256))
                 },

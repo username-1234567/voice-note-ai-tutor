@@ -155,11 +155,17 @@ class RecordingRepository(
                 File(img.filePath).takeIf { it.exists() }?.delete()
             }
             db.markerImageDao().deleteByMarker(m.id)
+            // 多轮追问引用 markerId，不删就会留下一堆指向不存在标记的孤儿行
+            db.markerTurnDao().deleteByMarker(m.id)
         }
         // 日志表引用标记 id，需在删除标记前清理，否则成为孤儿数据无限累积
         db.aiRequestLogDao().deleteForRecording(recordingId)
         db.markerDao().deleteByRecording(recordingId)
         db.pauseEventDao().deleteByRecording(recordingId)
+        // 整节汇总和整节对话按 recordingId 关联，同样要清干净——
+        // 用户点"彻底删除"时期望的是这条录音的一切都没了
+        db.recordingDigestDao().delete(recordingId)
+        db.recordingChatDao().clear(recordingId)
         db.recordingDao().delete(recordingId)
     }
 

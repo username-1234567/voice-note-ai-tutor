@@ -21,6 +21,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,6 +81,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -93,6 +96,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.suitanglu.app.data.CameraMode
+import com.suitanglu.app.ui.components.AppAlertDialog
 import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.service.RecordingBus
 import com.suitanglu.app.service.RecordingService
@@ -102,7 +106,7 @@ import java.io.File
 import kotlin.math.cos
 import kotlin.math.sin
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun RecordingScreen(
     hasCameraPermission: Boolean,
@@ -125,11 +129,20 @@ fun RecordingScreen(
     var markerText by rememberSaveable { mutableStateOf("") }
     var showStopConfirm by remember { mutableStateOf(false) }
     var croppingSource by rememberSaveable { mutableStateOf<Uri?>(null) }
+    // 这次拍照是不是"长按快拍"：是则跳过裁剪，直接入库
+    var quickCapture by rememberSaveable { mutableStateOf(false) }
     // saveable：进程被杀恢复后为 true，不再自动重启录音（避免恢复出“一坏一好”两条录音）
     var attemptedStart by rememberSaveable { mutableStateOf(false) }
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
     DisposableEffect(Unit) {
         onDispose { RecordingBus.clearStartError() }
+    }
+
+    fun reportQuickSave(ok: Boolean) {
+        if (!ok) {
+            android.widget.Toast.makeText(context, "这一页没存上，再拍一次", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     val cropLauncher = rememberLauncherForActivityResult(UCropContract()) { uri ->
@@ -137,8 +150,13 @@ fun RecordingScreen(
     }
     val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val src = croppingSource
-        if (ok && src != null) {
-            cropLauncher.launch(src to newCropUri(context))
+        when {
+            ok && src != null && quickCapture -> {
+                quickCapture = false
+                vm.saveQuickMarker(src) { reportQuickSave(it) }
+            }
+            ok && src != null -> cropLauncher.launch(src to newCropUri(context))
+            else -> quickCapture = false
         }
         croppingSource = null
     }
@@ -160,11 +178,21 @@ fun RecordingScreen(
         }
     }
 
-    // 应用内相机返回的图片 → 裁剪
+    // 应用内相机返回的图片 → 裁剪（快拍则直接入库）
     LaunchedEffect(Unit) {
-        PendingMarkerStore.capturedPath?.let { path ->
-            PendingMarkerStore.capturedPath = null
-            cropLauncher.launch(existingFileUri(context, File(path)) to newCropUri(context))
+        val path = PendingMarkerStore.capturedPath
+        PendingMarkerStore.capturedPath = null
+        if (path != null) {
+            val uri = existingFileUri(context, File(path))
+            if (quickCapture) {
+                quickCapture = false
+                vm.saveQuickMarker(uri) { reportQuickSave(it) }
+            } else {
+                cropLauncher.launch(uri to newCropUri(context))
+            }
+        } else if (quickCapture) {
+            // 进了相机又退出来没拍：不清标志的话，下一次短按会被当成快拍
+            quickCapture = false
         }
     }
 
@@ -236,7 +264,19 @@ fun RecordingScreen(
         return
     }
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+    // 长时间没声音时由 Service 推上来，这里就地提示一次
+    val levelWarning by RecordingBus.levelWarning.collectAsState()
+    LaunchedEffect(levelWarning) {
+        levelWarning?.let {
+            snackbar.showSnackbar(it)
+            RecordingBus.clearLevelWarning()
+        }
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
@@ -361,39 +401,82 @@ fun RecordingScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            Button(
-                onClick = {
-                    if (!hasCameraPermission && general.cameraMode != CameraMode.SYSTEM) {
-                        onRequestPermissions()
-                        return@Button
-                    }
-                    showMarkerSheet = true
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+            // 自绘按钮而不是 Button：Material3 的 Button 只暴露 onClick，挂不下长按。
+            // 短按 = 打开标记面板（可裁剪、可写字）；长按 = 直接进相机，拍完就入库。
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .combinedClickable(
+                        onClick = {
+                            if (!hasCameraPermission && general.cameraMode != CameraMode.SYSTEM) {
+                                onRequestPermissions()
+                            } else {
+                                showMarkerSheet = true
+                            }
+                        },
+                        onLongClick = {
+                            if (!hasCameraPermission && general.cameraMode != CameraMode.SYSTEM) {
+                                onRequestPermissions()
+                            } else {
+                                quickCapture = true
+                                if (general.cameraMode == CameraMode.IN_APP) {
+                                    onOpenInAppCamera()
+                                } else {
+                                    val src = newPhotoUri(context)
+                                    croppingSource = src
+                                    takePictureLauncher.launch(src)
+                                }
+                            }
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.PhotoCamera, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (markerCount == 0) "拍照并标记" else "拍照并标记（已 $markerCount 个）")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.PhotoCamera,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (markerCount == 0) "拍照并标记" else "拍照并标记（已 $markerCount 个）",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        // 固定 56dp 高 + 系统大字体时会换行顶出按钮，直接单行省略
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
             }
+            Text(
+                "长按直接拍，不裁剪，课后统一修",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            )
             Spacer(Modifier.height(10.dp))
         }
     }
 
     // 停止确认
     if (showStopConfirm) {
-        AlertDialog(
-            onDismissRequest = { showStopConfirm = false },
-            title = { Text("停止录音") },
-            text = { Text("停止后将按标记顺序自动发送 AI 讲解（需要网络）。确定停止吗？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showStopConfirm = false
-                    val id = s.recordingId
-                    vm.stop { }
-                    onFinished(id)
-                }) { Text("停止") }
+        AppAlertDialog(
+            title = "停止录音",
+            message = "录音会先存下来，标记图片留给你课后修整，确认无误后到回放页点「发送全部」，再交给 AI 讲解。录音结束后无法继续录这一段。",
+            confirmLabel = "停止录音",
+            dismissLabel = "继续录",
+            destructive = true,
+            onConfirm = {
+                showStopConfirm = false
+                val id = s.recordingId
+                vm.stop { }
+                onFinished(id)
             },
-            dismissButton = { TextButton(onClick = { showStopConfirm = false }) { Text("继续录音") } },
+            onDismissRequest = { showStopConfirm = false },
         )
     }
 
@@ -402,8 +485,20 @@ fun RecordingScreen(
         ModalBottomSheet(onDismissRequest = {
             showMarkerSheet = false
             markerText = "" // 未保存的文字备注不带入下一个标记
+            vm.discardPending() // 没保存的图片也一并丢掉
         }) {
-            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 16.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    "添加标记",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+                Text(
+                    "拍下这一页，保存后会立刻加入 AI 讲解队列（录音结束后统一发送）。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 14.dp),
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {

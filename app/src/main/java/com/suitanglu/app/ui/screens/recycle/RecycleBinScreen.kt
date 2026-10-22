@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -52,6 +53,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.suitanglu.app.ui.components.AppAlertDialog
+import com.suitanglu.app.ui.components.SecondaryTopBar
 
 class RecycleBinViewModel(app: Application) : AndroidViewModel(app) {
     private val container = AppGraph.get(app)
@@ -79,21 +82,30 @@ fun RecycleBinScreen(onBack: () -> Unit) {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            TopAppBar(
-                title = { Text("回收站") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-            )
-        },
+        topBar = { SecondaryTopBar(title = "回收站", onBack = onBack) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (items.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("回收站为空", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // 空状态：说清这里会出现什么、为什么现在没有
+                Column(
+                    Modifier.fillMaxSize().padding(32.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(
+                        Icons.Filled.DeleteForever,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.size(28.dp),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text("回收站是空的", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "删掉的录音会先放到这里，30 天内都能恢复。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
                 Row(
@@ -143,35 +155,35 @@ fun RecycleBinScreen(onBack: () -> Unit) {
     }
 
     if (confirmClear) {
-        AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("清空回收站") },
-            text = { Text("将彻底删除全部 ${items.size} 条录音及其图片、AI 回复，无法恢复。确定吗？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        vm.clearAll()
-                        snackbar.showSnackbar("回收站已清空")
-                    }
-                    confirmClear = false
-                }) { Text("清空", color = MaterialTheme.colorScheme.error) }
+        AppAlertDialog(
+            title = "清空回收站",
+            message = "将彻底删除全部 ${items.size} 条录音及其图片、AI 回复，无法恢复。",
+            confirmLabel = "全部删除",
+            destructive = true,
+            showIcon = true,
+            onConfirm = {
+                scope.launch {
+                    vm.clearAll()
+                    snackbar.showSnackbar("回收站已清空")
+                }
+                confirmClear = false
             },
-            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消") } },
+            onDismissRequest = { confirmClear = false },
         )
     }
 
     confirmDelete?.let { rec ->
-        AlertDialog(
-            onDismissRequest = { confirmDelete = null },
-            title = { Text("彻底删除") },
-            text = { Text("「${rec.title}」及其图片、AI 回复将被彻底删除，无法恢复。确定吗？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteForever(rec.id)
-                    confirmDelete = null
-                }) { Text("彻底删除", color = MaterialTheme.colorScheme.error) }
+        AppAlertDialog(
+            title = "彻底删除",
+            message = "「${rec.title}」及其图片、AI 回复将被彻底删除，无法恢复。",
+            confirmLabel = "彻底删除",
+            destructive = true,
+            showIcon = true,
+            onConfirm = {
+                vm.deleteForever(rec.id)
+                confirmDelete = null
             },
-            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("取消") } },
+            onDismissRequest = { confirmDelete = null },
         )
     }
 }

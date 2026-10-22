@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -45,6 +46,7 @@ import com.suitanglu.app.data.CourseSchedule
 import com.suitanglu.app.data.SettingsRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.suitanglu.app.ui.components.SecondaryTopBar
 
 /** 一次时段编辑：day 天 index 节，start/end 为分钟数 */
 private data class SlotEdit(val day: Int, val index: Int, val start: Int, val end: Int)
@@ -110,15 +112,11 @@ fun ScheduleScreen(onBack: () -> Unit) {
     BackHandler { save { onBack() } }
 
     Scaffold(
+        // 这一页全是输入框（5 个时间段 × 起止），键盘弹起时必须整体上移
+        modifier = Modifier.imePadding(),
         topBar = {
-            TopAppBar(
-                title = { Text("课程表") },
-                navigationIcon = {
-                    IconButton(onClick = { save { onBack() } }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-            )
+            // 返回即保存（原有的静默保存行为），文案在下方说明里写明
+            SecondaryTopBar(title = "课程表", onBack = { save { onBack() } })
         },
     ) { padding ->
         Column(

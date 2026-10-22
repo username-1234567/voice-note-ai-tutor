@@ -43,6 +43,16 @@ data class Marker(
     val sendOrder: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /**
+     * 待复习：语义是"这条我还没弄懂，回头要再看一遍"，不是收藏。
+     * 所以它的入口是星标而不是心形，列表里也按"未懂"而不是"喜欢"来解释。
+     *
+     * defaultValue 必须写：迁移里是 `ADD COLUMN ... NOT NULL DEFAULT 0`，
+     * 而 Room 启动时会比对实体的 defaultValue 与实际表结构，两边不一致会直接抛
+     * "Room cannot verify the data integrity" —— 老用户升级时必崩。
+     */
+    @androidx.room.ColumnInfo(defaultValue = "0")
+    val needsReview: Boolean = false,
 ) {
     companion object {
         const val AI_PENDING = "pending"
@@ -118,3 +128,87 @@ data class AiRequestLog(
     val createdAt: Long = System.currentTimeMillis(),
     val finishedAt: Long? = null,
 )
+
+/**
+ * 一节课的 AI 汇总（分点提纲 + 术语表 + 自测问题）。
+ *
+ * 每个标记都已经有讲解，但复习时要的是"这节课讲了什么"，
+ * 而不是十条互不相干的片段。一个 recordingId 只保留一份，重新生成即覆盖。
+ */
+@Serializable
+@Entity(tableName = "recording_digests")
+data class RecordingDigest(
+    @PrimaryKey val recordingId: Long,
+    val content: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * 就"这节课"直接对话的消息。
+ *
+ * 和 MarkerTurn 的区别：那边一问一图，这边是整节课的上下文，
+ * 用来问"第 20 分钟讲的那个公式是什么意思"这类跨标记的问题。
+ */
+@Serializable
+// indices 必须声明：迁移 SQL 里建了 index_recording_chats_recordingId，
+// Room 校验时会把"实际有索引、实体没声明"也判为不匹配
+@Entity(tableName = "recording_chats", indices = [androidx.room.Index("recordingId")])
+data class RecordingChat(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val recordingId: Long,
+    /** user / assistant */
+    val role: String,
+    val content: String,
+    val createdAt: Long = System.currentTimeMillis(),
+) {
+    companion object {
+        const val ROLE_USER = "user"
+        const val ROLE_AI = "assistant"
+    }
+}
+
+/**
+ * 直接对话的会话。
+ *
+ * 和 RecordingChat 的区别：那个挂在某条录音下、上下文是那节课；
+ * 这个是全局的，可以随手问一个问题、拍一张图，答完存成一条会话，下次能找回来。
+ */
+@Entity(tableName = "chat_sessions")
+data class ChatSession(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 自动生成：首条消息先截取，随后尝试用 AI 改写成一个能一眼认出的短标题 */
+    val title: String,
+    /** 用户自己补的备注，可以为空 */
+    val note: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * 直接对话的消息。
+ *
+ * imagePaths 用 \n 分隔多张图：一次发多张课件照片问"这几页有什么区别"是常见用法，
+ * 单独建表反而让"哪张图属于哪句话"变得难查。
+ */
+@Entity(tableName = "chat_messages", indices = [androidx.room.Index("sessionId")])
+data class DirectMessage(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    /** user / assistant */
+    val role: String,
+    val content: String,
+    val imagePaths: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+) {
+    companion object {
+        const val ROLE_USER = "user"
+        const val ROLE_AI = "assistant"
+
+        fun splitPaths(raw: String?): List<String> =
+            raw?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
+
+        fun joinPaths(paths: List<String>): String? =
+            paths.takeIf { it.isNotEmpty() }?.joinToString("\n")
+    }
+}

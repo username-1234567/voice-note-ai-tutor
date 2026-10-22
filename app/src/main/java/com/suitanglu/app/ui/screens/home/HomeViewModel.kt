@@ -34,8 +34,15 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 未筛选的全部录音，按天分区 */
     private val allSections: StateFlow<List<HomeSection>> =
-        combine(container.db.recordingDao().observeActive(), container.db.markerDao().observeAll()) { recs, markers ->
+        combine(
+            container.db.recordingDao().observeActive(),
+            container.db.markerDao().observeAll(),
+            // 多轮追问也要能搜到：原来的索引只拼了 userText 和首轮 aiResponse，
+            // 你在追问里问过、AI 答过的内容，搜"关键词"是查不出来的
+            container.db.markerTurnDao().observeAll(),
+        ) { recs, markers, turns ->
             val byRecording = markers.groupBy { it.recordingId }
+            val turnsByMarker = turns.groupBy { it.markerId }
             val items = recs.map { rec ->
                 val ms = byRecording[rec.id].orEmpty()
                 val success = ms.count { it.aiStatus == Marker.AI_SUCCESS }
@@ -51,7 +58,13 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                         rec.courseName?.let { append(it).append(' ') }
                         ms.forEach { m ->
                             m.userText?.let { append(it).append(' ') }
-                            m.aiResponse?.take(500)?.let { append(it).append(' ') }
+                            m.aiResponse?.let { append(it).append(' ') }
+                            // 全量进索引，不截断：宁可多占点内存，也不要"明明说过却搜不到"。
+                            // 真到数据量撑不住时再上 FTS，那时检索走 SQL，内存里就不用留这份副本了。
+                            turnsByMarker[m.id]?.forEach { t ->
+                                t.question?.let { append(it).append(' ') }
+                                t.answer?.let { append(it).append(' ') }
+                            }
                         }
                     }.lowercase(),
                 )

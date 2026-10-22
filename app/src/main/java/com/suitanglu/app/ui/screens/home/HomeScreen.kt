@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.RestoreFromTrash
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -94,6 +96,7 @@ import com.suitanglu.app.AppGraph
 import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.data.db.Recording
 import com.suitanglu.app.service.RecordingBus
+import com.suitanglu.app.ui.components.AppAlertDialog
 import com.suitanglu.app.ui.theme.recordColors
 import com.suitanglu.app.ui.theme.rememberReducedMotion
 import com.suitanglu.app.ui.theme.tabularNumbers
@@ -116,6 +119,7 @@ fun HomeScreen(
     hasNotificationPermission: Boolean,
     onRequestPermissions: () -> Unit,
     onStartRecording: () -> Unit,
+    onOpenChat: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecording: (Long) -> Unit,
     onOpenRecycle: () -> Unit,
@@ -276,6 +280,7 @@ fun HomeScreen(
                     totalMs = sections.sumOf { section -> section.items.sumOf { it.recording.durationMs } },
                     courseName = courseFilter,
                     onOpenRecycle = onOpenRecycle,
+                    onOpenChat = onOpenChat,
                     onOpenSettings = onOpenSettings,
                 )
             }
@@ -446,66 +451,62 @@ fun HomeScreen(
         }
     }
 
-    // 第一次删除提醒
+    // 第一次删除提醒：只是移到回收站，可恢复，所以确认键仍是主色
     pendingDelete?.let { rec ->
-        AlertDialog(
+        AppAlertDialog(
+            title = "删除录音",
+            message = "「${rec.title}」将移入回收站，可随时恢复或彻底删除。",
+            confirmLabel = "移入回收站",
+            onConfirm = {
+                vm.deleteToRecycle(rec.id)
+                vm.markDeleteTipShown()
+                pendingDelete = null
+            },
             onDismissRequest = { pendingDelete = null },
-            title = { Text("删除录音") },
-            text = { Text("「${rec.title}」将移入回收站，可前往回收站恢复或彻底删除。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteToRecycle(rec.id)
-                    vm.markDeleteTipShown()
-                    pendingDelete = null
-                }) { Text("移入回收站") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
-            },
         )
     }
 
-    // 仅删除录音确认
+    // 仅删除音频：不可恢复，确认键转 error 色并加警示图标
     pendingAudioOnly?.let { rec ->
-        AlertDialog(
-            onDismissRequest = { pendingAudioOnly = null },
-            title = { Text("仅删除录音文件") },
-            text = { Text("只删除「${rec.title}」的音频文件，标记、图片和 AI 回复将保留。此操作不可恢复。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteAudioOnly(rec.id)
-                    pendingAudioOnly = null
-                }) { Text("仅删除音频") }
+        AppAlertDialog(
+            title = "仅删除录音文件",
+            message = "只删除「${rec.title}」的音频，标记、图片和 AI 讲解都会保留。此操作不可恢复。",
+            confirmLabel = "删除音频",
+            destructive = true,
+            showIcon = true,
+            onConfirm = {
+                vm.deleteAudioOnly(rec.id)
+                pendingAudioOnly = null
             },
-            dismissButton = { TextButton(onClick = { pendingAudioOnly = null }) { Text("取消") } },
+            onDismissRequest = { pendingAudioOnly = null },
         )
     }
 
     // 重命名
     renameTarget?.let { rec ->
-        AlertDialog(
-            onDismissRequest = { renameTarget = null },
-            title = { Text("重命名录音") },
-            text = {
-                OutlinedTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it },
-                    singleLine = true,
-                    label = { Text("展示名称") },
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.rename(rec.id, renameText) { ok ->
-                        scope.launch {
-                            snackbar.showSnackbar(if (ok) "已重命名" else "重命名失败")
-                        }
+        AppAlertDialog(
+            title = "重命名录音",
+            confirmLabel = "保存",
+            // 空名字会让列表里出现一条没有标题的记录，直接禁掉确认键
+            confirmEnabled = renameText.isNotBlank(),
+            onConfirm = {
+                vm.rename(rec.id, renameText) { ok ->
+                    scope.launch {
+                        snackbar.showSnackbar(if (ok) "已重命名" else "重命名失败")
                     }
-                    renameTarget = null
-                }) { Text("确定") }
+                }
+                renameTarget = null
             },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } },
-        )
+            onDismissRequest = { renameTarget = null },
+        ) {
+            OutlinedTextField(
+                value = renameText,
+                onValueChange = { renameText = it },
+                singleLine = true,
+                label = { Text("录音名称") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 
     // 按日期跳转：直接滚到那天的分组；那天没录音就退到最近的一天并说明
@@ -604,6 +605,7 @@ private fun HomeHeader(
     totalMs: Long,
     courseName: String?,
     onOpenRecycle: () -> Unit,
+    onOpenChat: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     Row(
@@ -629,6 +631,13 @@ private fun HomeHeader(
             Icon(
                 Icons.Outlined.RestoreFromTrash,
                 contentDescription = "回收站",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onOpenChat) {
+            Icon(
+                Icons.Outlined.Forum,
+                contentDescription = "对话",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -840,13 +849,16 @@ private fun TimelineRow(
                     RecordingPulseDot()
                     Spacer(Modifier.width(5.dp))
                 }
+                val pending = pendingOf(item)
+                val pendingColor = MaterialTheme.recordColors.pending
                 Text(
                     subtitleOf(item, isRecording, audioDeleted),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (item.markerFailed > 0 && !audioDeleted) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                    color = when {
+                        audioDeleted -> MaterialTheme.colorScheme.onSurfaceVariant
+                        item.markerFailed > 0 -> MaterialTheme.colorScheme.error
+                        pending > 0 -> pendingColor
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -858,6 +870,15 @@ private fun TimelineRow(
                         Icons.Filled.Warning,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(12.dp),
+                    )
+                } else if (pending > 0 && !audioDeleted) {
+                    // 取消自动发送后，"还欠着"必须自己有话说，否则这节录音就被忘在列表里
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Outlined.Schedule,
+                        contentDescription = "有标记待发送",
+                        tint = pendingColor,
                         modifier = Modifier.size(12.dp),
                     )
                 }
@@ -903,13 +924,23 @@ private fun TimelineRow(
     }
 }
 
+/** 卡片上没发出去的标记数：录音结束后不再自动发送，这是用户唯一能看见"还欠着"的地方 */
+private fun pendingOf(item: HomeItem): Int =
+    (item.markerTotal - item.markerSuccess - item.markerFailed).coerceAtLeast(0)
+
 /** 副标题只回答"这节课的讲解进度"，不再堆时间/时长 */
-private fun subtitleOf(item: HomeItem, isRecording: Boolean, audioDeleted: Boolean): String = when {
-    isRecording -> "录制中"
-    audioDeleted -> "音频已删除 · 标记与讲解仍在"
-    item.markerTotal == 0 -> "无标记"
-    item.markerFailed == 0 -> "${item.markerTotal} 个标记 · 全部已讲解"
-    else -> "${item.markerTotal} 个标记 · ${item.markerFailed} 个讲解失败"
+private fun subtitleOf(item: HomeItem, isRecording: Boolean, audioDeleted: Boolean): String {
+    if (isRecording) return "录制中"
+    if (audioDeleted) return "音频已删除 · 标记与讲解仍在"
+    if (item.markerTotal == 0) return "无标记"
+    val pending = pendingOf(item)
+    return when {
+        pending > 0 && item.markerFailed > 0 ->
+            "${item.markerTotal} 个标记 · $pending 待发送，${item.markerFailed} 个失败"
+        pending > 0 -> "${item.markerTotal} 个标记 · $pending 个待发送"
+        item.markerFailed > 0 -> "${item.markerTotal} 个标记 · ${item.markerFailed} 个讲解失败"
+        else -> "${item.markerTotal} 个标记 · 全部已讲解"
+    }
 }
 
 @Composable
@@ -963,7 +994,7 @@ private fun EmptyState() {
         Text("还没有录音", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(
-            "上课时点右下角「开始录音」，遇到重点拍照标记。\n录音结束后会自动把图片发给 AI 讲解。",
+            "上课时点右下角「开始录音」，遇到重点拍照标记。\n课后在回放页修好图，再一起发给 AI 讲解。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

@@ -36,6 +36,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 class RecordingService : Service() {
 
     companion object {
+        /** 心跳间隔，静音累计按这个粒度加 */
+        private const val HEARTBEAT_MS = 500L
+
+        /** 峰值低于此值视为"没声音"（满量程 32767，约 3%） */
+        private const val QUIET_AMPLITUDE = 1000
+
+        /** 连续安静多久提醒一次 */
+        private const val QUIET_ALERT_MS = 60_000L
+
         const val ACTION_START = "com.suitanglu.app.action.START"
         const val ACTION_PAUSE = "com.suitanglu.app.action.PAUSE"
         const val ACTION_RESUME = "com.suitanglu.app.action.RESUME"
@@ -65,6 +74,12 @@ class RecordingService : Service() {
     private var paused = false
     private var interrupted = false
     private var interruptReason: String? = null
+
+    /** 连续安静的累计时长（每 500ms 心跳累加） */
+    private var quietMs = 0L
+
+    /** 本轮安静是否已提醒过；声音恢复后重置，允许下一次再提醒 */
+    private var quietAlerted = false
     private var sizeLimitBytes = 0L
     private val busy = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
@@ -74,6 +89,14 @@ class RecordingService : Service() {
 
     /** 录音尚在启动时收到用户暂停请求：启动完成后执行 */
     @Volatile private var pauseRequested = false
+
+    /**
+     * 用户是"主动"暂停的。
+     *
+     * 与 [interrupted]（被来电/其他应用打断）区分开：音频焦点恢复时只自动续录"被打断"的录音。
+     * 没有这个标志时会出现——用户按下暂停 → 来了条语音 → 焦点恢复 → 录音自己又开始了。
+     */
+    @Volatile private var userPaused = false
 
     /** 收尾期间收到新的开始请求：收尾完成后自动开始新录音 */
     @Volatile private var restartAfterStop = false
@@ -115,6 +138,7 @@ class RecordingService : Service() {
         stopping.set(false)
         stopRequested = false
         pauseRequested = false
+        userPaused = false
         RecordingBus.clearStartError()
         val container = (application as RecordApp).container
         scope.launch {
@@ -128,18 +152,28 @@ class RecordingService : Service() {
                 recordingId = rec.id
                 File(rec.filePath).parentFile?.mkdirs()
 
-                recorder = MediaRecorder(applicationContext).apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    // 设备支持的最高音质：AAC 48kHz 立体声 256kbps
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setAudioSamplingRate(48000)
-                    setAudioEncodingBitRate(256000)
-                    setAudioChannels(2)
-                    setOutputFile(rec.filePath)
-                    prepare()
-                    start()
+                // 先建局部引用再赋值给属性：apply 里 prepare()/start() 抛异常时，
+                // 赋值语句根本不会执行，那个 MediaRecorder 就永远没人 release——
+                // 麦克风被占用导致 prepare 失败时，之后每次录音都会跟着失败
+                val mr = MediaRecorder(applicationContext)
+                try {
+                    mr.apply {
+                        setAudioSource(MediaRecorder.AudioSource.MIC)
+                        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                        // 设备支持的最高音质：AAC 48kHz 立体声 256kbps
+                        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                        setAudioSamplingRate(48000)
+                        setAudioEncodingBitRate(256000)
+                        setAudioChannels(2)
+                        setOutputFile(rec.filePath)
+                        prepare()
+                        start()
+                    }
+                } catch (e: Exception) {
+                    runCatching { mr.release() }
+                    throw e
                 }
+                recorder = mr
                 segmentStart = System.currentTimeMillis()
                 requestAudioFocus()
                 RecordingBus.update(
@@ -180,6 +214,29 @@ class RecordingService : Service() {
         }
     }
 
+    /**
+     * 安静检测：老师走到后排、或者手机被书挡住，录出来是一整段静音，
+     * 而这种事往往要回放时才发现——那时课已经上完了。
+     * 连续 60 秒峰值低于 3% 提醒一次；声音回来后重置，允许之后再提醒。
+     */
+    private fun checkSilence(active: Boolean, amplitude: Int) {
+        if (!active) {
+            // 暂停期间不计入，恢复后从头计时——否则"静音 50 秒 → 暂停一节课 → 恢复 10 秒"会立刻误报
+            quietMs = 0
+            return
+        }
+        if (amplitude < QUIET_AMPLITUDE) {
+            quietMs += HEARTBEAT_MS
+            if (quietMs >= QUIET_ALERT_MS && !quietAlerted) {
+                quietAlerted = true
+                RecordingBus.setLevelWarning("已经 1 分钟几乎没有声音，看看手机是不是被挡住了")
+            }
+        } else {
+            quietMs = 0
+            quietAlerted = false
+        }
+    }
+
     private fun startTimer() {
         timerJob?.cancel()
         timerJob = scope.launch {
@@ -189,21 +246,21 @@ class RecordingService : Service() {
             while (isActive && recorder != null) {
                 val now = System.currentTimeMillis()
                 val elapsed = if (!paused) accumulatedMs + (now - segmentStart) else accumulatedMs
+                // maxAmplitude 读取后峰值归零，所以整个心跳只能读一次：
+                // 声纹环和静音检测都吃这一份原始值
+                val rawAmplitude = if (paused || interrupted) {
+                    0
+                } else {
+                    runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
+                }
+                checkSilence(!paused && !interrupted, rawAmplitude)
                 RecordingBus.update(
                     currentState().copy(
                         elapsedMs = elapsed,
                         paused = paused,
                         interrupted = interrupted,
                         interruptReason = interruptReason,
-                        level = if (paused || interrupted) {
-                            0f
-                        } else {
-                            // maxAmplitude 在未录制/已暂停时会抛 IllegalStateException，
-                            // 且读取后峰值归零，正好等于"最近 500ms 的峰值"
-                            runCatching { (recorder?.maxAmplitude ?: 0) / 32767f }
-                                .getOrDefault(0f)
-                                .coerceIn(0f, 1f)
-                        },
+                        level = (rawAmplitude / 32767f).coerceIn(0f, 1f),
                     ),
                 )
                 if (now - lastNotify > 5_000) {
@@ -239,6 +296,8 @@ class RecordingService : Service() {
     }
 
     private fun doPause(type: String, reason: String?) {
+        // 先记账再判状态：已经因打断暂停时用户再按暂停，也说明"用户希望保持暂停"
+        if (type == PauseEvent.TYPE_USER_PAUSE) userPaused = true
         val rec = recorder
         if (rec == null) {
             // 录音尚在启动：记住用户暂停请求，启动完成后执行
@@ -275,6 +334,7 @@ class RecordingService : Service() {
         try {
             rec.resume()
             paused = false
+            userPaused = false
             segmentStart = System.currentTimeMillis()
             interrupted = false
             interruptReason = null
@@ -312,17 +372,36 @@ class RecordingService : Service() {
         val elapsed = if (!paused) accumulatedMs + (now - segmentStart) else accumulatedMs
         val id = recordingId
         val interruptedFlag = interrupted
+        // 立刻把属性置空再把对象交给后台释放：
+        // 否则 release 还没跑完时 startRecording 会看到 recorder != null 而直接 return，
+        // 用户点"开始"就没反应了
+        val toRelease = recorder
+        recorder = null
         releaseFocus()
-        releaseRecorder()
         timerJob?.cancel()
-        RecordingBus.update(null)
+        // 释放动作挪到后台：MediaRecorder.stop() 要把 MP4 的 moov 写完，
+        // 90 分钟的录音可能卡几百毫秒到几秒；这条路径是 onStartCommand 直接调的，
+        // 留在主线程就是实打实的 ANR 风险
         scope.launch {
+            try {
+                toRelease?.stop()
+            } catch (_: Exception) {
+            }
+            try {
+                toRelease?.release()
+            } catch (_: Exception) {
+            }
+            RecordingBus.update(null)
+            // 本轮结束，静音累计与未消费的提醒都清掉，避免下一段录音一开就弹
+            quietMs = 0
+            quietAlerted = false
+            RecordingBus.clearLevelWarning()
             try {
                 val container = (application as RecordApp).container
                 container.recordingRepository.finalizeRecording(id, now, elapsed, interruptedFlag)
-                if (elapsed > 0) {
-                    container.aiSendManager.enqueueAutoSend(id)
-                }
+                // 不再自动发送：拍下来的课件往往还要在课后裁一下再发，
+                // 自动发送会把"原图"直接送给 AI，改图就白花钱了。
+                // 发送入口在回放页（有未发送标记时会显示「发送全部」）。
             } catch (_: Exception) {
             }
             if (restartAfterStop) {
@@ -357,7 +436,9 @@ class RecordingService : Service() {
                             else -> "音频焦点丢失"
                         },
                     )
-                    AudioManager.AUDIOFOCUS_GAIN -> doResume()
+                    // 焦点被别处抢走后再还回来，只续录"被打断"的那种；
+                    // 用户手动按的暂停不该被系统悄悄撤销
+                    AudioManager.AUDIOFOCUS_GAIN -> if (!userPaused) doResume()
                 }
             }
             .build()

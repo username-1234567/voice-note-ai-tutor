@@ -219,7 +219,8 @@ class AiSendManager(
         var lastDelta: String? = null
         coroutineContext[Job]?.let { activeTurnJobs[turn.id] = it }
         try {
-            val client = DeepSeekClient(ai, settings.generalConfigNow().compressImages, settings.generalConfigNow().compressQuality)
+            val general = settings.generalConfigNow()
+            val client = DeepSeekClient(ai, general.compressImages, general.compressQuality)
             val (answer, usage) = client.chat(messages) { delta ->
                 if (delta.isNotEmpty() && delta == lastDelta) {
                     repeatCount++
@@ -241,6 +242,8 @@ class AiSendManager(
                 }
             }
             _streaming.value = null
+            // 成功路径也要摘掉：只在 catch 里 remove 的话，每成功一条就留一个 Job 在 map 里
+            activeTurnJobs.remove(turn.id)
             val t = System.currentTimeMillis()
             db.markerTurnDao().update(
                 current.copy(
@@ -316,13 +319,20 @@ class AiSendManager(
 
     /** 单条重发入口：有首轮则重新生成，没有则补建首轮 */
     suspend fun sendSingle(markerId: Long): Boolean {
-        val marker = db.markerDao().getById(markerId) ?: return false
-        return try {
-            ensureTurn0AndGenerate(marker)
+        // 和批量发送共用同一个 busy：
+        // 两边并发时会各自查到"还没有 orderIndex=0 的轮次"，然后各插一条，
+        // 结果同一个标记出现两条首轮对话，_streaming 也会被两边交替覆盖
+        if (!busy.compareAndSet(false, true)) return false
+        try {
+            val marker = db.markerDao().getById(markerId) ?: return false
+            return ensureTurn0AndGenerate(marker)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            false
+            return false
+        } finally {
+            _streaming.value = null
+            busy.set(false)
         }
     }
 }

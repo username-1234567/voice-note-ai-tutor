@@ -213,7 +213,11 @@ class BackupManager(
                             settings.setSlotTime(day, idx, v.startMinute, v.endMinute)
                         }
                     }
-                    settings.setAiConfig(s.ai)
+                    // 备份里的 Key 为空时保留本地：用户可能是先导出、后配置的 Key，
+                    // 直接覆盖会把已经填好的 Key 清空，下次录音才发现 AI 全失败
+                    val localAi = settings.aiConfigNow()
+                    val restoredAi = if (s.ai.apiKey.isBlank()) s.ai.copy(apiKey = localAi.apiKey) else s.ai
+                    settings.setAiConfig(restoredAi)
                     settings.setGeneralConfig(s.general)
                 }
             }
@@ -239,9 +243,11 @@ class BackupManager(
     }
 
     private fun openImportedDb(file: File, name: String): AppDatabase {
-        // 用不冲突的名字打开；createFromFilePath 会把备份库复制到应用数据库目录
+        // 用不冲突的名字打开；createFromFilePath 会把备份库复制到应用数据库目录。
+        // 必须带上迁移：备份可能来自旧版本，缺迁移会直接抛异常，表现为"导入失败"
         return androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, name)
             .createFromFile(file)
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
     }
@@ -316,6 +322,21 @@ class BackupManager(
 
                 for (event in importedDb.pauseEventDao().getAll().filter { it.recordingId == rec.id }) {
                     db.pauseEventDao().insert(event.copy(id = 0, recordingId = newRecId))
+                }
+
+                // 多轮追问：之前漏了这张表，导入后只剩首轮 aiResponse，
+                // 所有追问和 AI 的回答都会消失
+                for (turn in importedDb.markerTurnDao().getByRecording(rec.id)) {
+                    val newMarkerId = idMap[turn.markerId] ?: continue
+                    db.markerTurnDao().insert(turn.copy(id = 0, markerId = newMarkerId))
+                }
+
+                // 整节汇总与整节对话（v3 新增）
+                importedDb.recordingDigestDao().get(rec.id)?.let { digest ->
+                    db.recordingDigestDao().upsert(digest.copy(recordingId = newRecId))
+                }
+                for (chat in importedDb.recordingChatDao().getAll(rec.id)) {
+                    db.recordingChatDao().insert(chat.copy(id = 0, recordingId = newRecId))
                 }
             }
             added++

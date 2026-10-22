@@ -21,6 +21,14 @@ data class AiConfig(
     val timeoutSeconds: Int = 180,
     val maxTokens: Int = 0,
     val prompt: String = "详细讲解内容",
+    /**
+     * 思考强度：off / low / high / max。
+     *
+     * off 会显式下发 `thinking: disabled`（服务端默认是开启的，不发参数等于没关）；
+     * 其余三档下发 `thinking: enabled` + `reasoning_effort`。
+     * 讲解课件照片属于"看图说清楚"，low 通常就够，max 留给推导密集的科目。
+     */
+    val reasoningEffort: String = "high",
 )
 
 @kotlinx.serialization.Serializable
@@ -54,6 +62,7 @@ class SettingsRepository(private val context: Context) {
         val aiTimeout = intPreferencesKey("ai_timeout_sec")
         val aiMaxTokens = intPreferencesKey("ai_max_tokens")
         val aiPrompt = stringPreferencesKey("ai_prompt")
+        val aiReasoningEffort = stringPreferencesKey("ai_reasoning_effort")
         val cameraMode = stringPreferencesKey("camera_mode")
         val compressImages = booleanPreferencesKey("compress_images")
         val compressQuality = intPreferencesKey("compress_quality")
@@ -84,6 +93,7 @@ class SettingsRepository(private val context: Context) {
             timeoutSeconds = p[K.aiTimeout] ?: 180,
             maxTokens = p[K.aiMaxTokens] ?: 0,
             prompt = p[K.aiPrompt] ?: "详细讲解内容",
+            reasoningEffort = p[K.aiReasoningEffort] ?: "high",
         )
     }
 
@@ -149,6 +159,7 @@ class SettingsRepository(private val context: Context) {
             p[K.aiTimeout] = config.timeoutSeconds
             p[K.aiMaxTokens] = config.maxTokens
             p[K.aiPrompt] = config.prompt
+            p[K.aiReasoningEffort] = config.reasoningEffort
         }
     }
 
