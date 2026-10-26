@@ -1,40 +1,119 @@
-# 随堂录 (voice-note-ai-tutor)
+# 随堂录
 
-**语言 / Language**: [简体中文](README.md) | [English](README_EN.md)
+**上课来不及记，就拍一张。课后让 AI 一张一张讲给你听。**
 
-安卓本地优先的课堂/讲座录音 App：录音中拍照标记（可选文字备注），录音结束后自动将标记图片按时间顺序发送给 DeepSeek AI「详细讲解内容」，流式保存 AI 回复。每个标记都是一个完整的 AI 对话——支持追问、编辑提示词、单条重新生成、手动停止生成，回答以内置离线渲染器呈现 markdown 与 LaTeX 公式；请求前缀稳定以命中 DeepSeek 上下文缓存，每轮显示 token 用量。支持录音回放、标记跳转、课程表自动命名、按天展示、批量选择、zip 备份导入导出（Hash 校验合并）、回收站与应用内更新。
+![界面预览](docs/screenshots/overview.png)
+
+![platform](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)
+![kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
+![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
+![release](https://img.shields.io/badge/release-v1.4.1-2ea44f)
+![size](https://img.shields.io/badge/APK-6.7%20MB-lightgrey)
+
+语言：[简体中文](README.md) | [English](README_EN.md)
+
+---
+
+## 它做什么
+
+课上老师讲到关键处，你举起手机拍一张，继续听课，不用停下来抄。
+
+课后打开这条录音，每张照片都配着一段 AI 讲解——它知道你拍的是第几分钟的内容，也知道你当时写了什么备注。看不懂就继续追问，它记得上下文。
+
+```
+录音 ──拍照标记──▶ 课后 ──逐张讲解──▶ 追问 / 合并 / 汇编成提纲
+```
+
+录音和照片全部存在手机本地。AI 只在你要讲解时，把你选中的图发出去。
+
+## 界面
+
+| 回放页：逐条讲解 + 进度条标记 | 深色模式 |
+|---|---|
+| ![回放](docs/screenshots/playback.png) | ![深色](docs/screenshots/dark.png) |
 
 ## 功能
 
-- **后台录音保活**：前台服务 + 常驻通知（暂停/继续/停止），锁屏切后台继续；AAC 48kHz 立体声最高音质。
-- **打断处理**：来电/音频焦点丢失自动暂停并记录，恢复后自动继续；回放页显示截断点。
-- **拍照标记**：系统相机 / 应用内相机（CameraX）/ 相册选图 → uCrop 自由裁剪 → 文字备注 → 多图同标记；标记立即入库。
-- **AI 讲解**：DeepSeek 兼容接口，图片 base64 + 提示词（自动附带标记文字备注作为「涉及知识点」），SSE 流式实时显示；失败自动跳过后续，支持「重发失败 / 全部重发 / 单条重新生成」。
-- **多轮追问**：每个标记都是完整对话——首轮显示实际发送的提示词（可在对话中编辑），支持追问、编辑后重新答复；上下文完整带入且前缀逐字节稳定以命中 DeepSeek 上下文缓存（回答下方显示「输入 N（缓存命中 M）· 输出 K」）。
-- **回答渲染**：离线 markdown-it + KaTeX 渲染 LaTeX 公式、表格、代码块，深色模式自适应；生成中可随时「停止生成」保留已生成部分；模型重复刷屏自动终止。
-- **token 控制**：最大输出默认不限制（0 = 由模型决定）；达到长度上限提示可追问「继续」。
-- **回放页**：ExoPlayer 播放、0.5x–2x 倍速、±15 秒；进度条显示标记点（按 AI 状态着色）与打断点，点击跳转并沿用播放状态。
-- **课程表**：周一至周日各五个时间段（默认 08:00–09:40 / 10:00–11:40 / 14:30–16:00 / 16:10–17:40 / 19:00–22:00），时间段起止与课程名称均可按天自定义；按开始时间命中命名，跨段/未命中/为空显示「未命名」；实际文件名 `{课程名}_{yyyyMMdd_HHmmss}.m4a`，重命名同步文件名并保留时间戳。
-- **首页**：按天分区（今天/昨天/日期）从新到旧、吸顶标题；长按进入批量选择（全选/批量移入回收站）；单条「⋮」菜单支持重命名、删除到回收站、仅删除录音文件、导出单条录音。
-- **备份**：导出 zip（manifest.json + database/app.db + recordings/ + images/ + settings.json，含 API Key 不加密）；导入合并，文件 Hash（SHA-256）相同跳过、不同则 `_导入_N` 重命名。
-- **回收站**：恢复 / 彻底删除 / 清空，手动清理不自动清。
-- **应用内更新**：访问本仓库 GitHub Releases，检查/下载/安装 APK。
+**录音**
+- 前台服务保活，锁屏切后台继续；AAC 48kHz 立体声
+- 来电或音频焦点丢失自动暂停并记录，回放页能看到截断点
+- 连续一分钟没人说话提醒一次（老师走到后排、手机被书挡住）
+- 可按课程表自动命名：`{课程名}_{yyyyMMdd_HHmmss}.m4a`
 
-## 构建
+**标记**
+- 短按：拍照 → 裁剪 → 写备注；长按：直接拍完入库，不打断听课
+- 一个标记可挂多张图；录音途中能回看已拍的内容
+- 课后可以重新裁剪，旧讲解自动作废、退回待发送
+- 标记「待复习」（我还没弄懂），列表可只看星标
 
-- Android Studio 打开根目录即可（或 `./gradlew assembleRelease`）。
-- 最低 Android 10（API 29），目标 API 35。
-- 签名：签名密钥不随仓库分发（本地经 `local.properties` 的 `signing.*` 配置，CI 经仓库 Secrets 注入），并通过 Android v3 谱系完成密钥轮换；启用 R8 混淆。
+**AI 讲解**
+- 每个标记一轮完整对话：追问、编辑提示词、重新生成、中途停止
+- 多个标记可以**合并成一次请求**，共用一条讲解（拍一页课件常要分两三张）
+- 每个标记可单独设提示词；整节课可汇编成「分点提纲 + 术语表 + 三个自测问题」
+- 请求前缀逐字节稳定，命中 DeepSeek 上下文缓存
+- 回答用离线 markdown-it + KaTeX 渲染，公式表格代码块都支持
+- 每条标记显示这条讲解花了多少钱（仅 DeepSeek 端点，按官方峰谷价估算）
 
-## 发布新版本（应用内更新）
+**直接对话**
+- 首页进入，随手问或发图，首轮结束自动生成标题，会话可回看
 
-1. 修改 `update/UpdateChecker.kt` 中 `CURRENT_VERSION`（与 `versionName` 保持一致）。
-2. 提交并打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`。
-3. GitHub Actions（`.github/workflows/release.yml`）自动构建 release APK 并创建 Release 上传 APK。
-4. App 内「设置 → 应用更新」即可检查安装。
+**整理**
+- 首页时间轴 + 搜索（覆盖标题、课程名、标记备注、AI 回答与多轮追问）
+- 回收站、批量选择、zip 备份导入导出（SHA-256 校验合并）
+- 应用内检查更新
 
-## 数据与隐私说明
+## 快速开始
 
-- 所有数据（录音、图片、AI 回复）仅保存在应用私有目录，无登录、无云同步；卸载应用会全部删除，请定期导出备份。
-- 导出的备份 zip 含明文 API Key，请妥善保管。
-- 标记图片、提示词与标记的文字备注（作为「涉及知识点」）会发送给你配置的 AI 服务；多轮追问内容亦会随上下文发送。除此之外无任何数据上传。
+**方式一：直接安装**
+
+到 [Releases](https://github.com/username-1234567/voice-note-ai-tutor/releases) 下载最新的 `app-release.apk`。
+
+> 需要 Android 10 及以上。安装后要先在「设置 → AI 配置」填一个 API Key，否则拍照后没有讲解。
+
+**方式二：自己构建**
+
+```bash
+git clone https://github.com/username-1234567/voice-note-ai-tutor.git
+cd voice-note-ai-tutor
+./gradlew assembleRelease
+```
+
+Android Studio 直接打开根目录也可以。签名密钥不随仓库分发，本地在 `local.properties` 里配 `signing.*`；不打签名也能用 debug 包跑起来。
+
+**API Key**
+
+默认接 DeepSeek 官方端点，也支持任何 OpenAI 兼容的 `/chat/completions`。在应用内「设置 → AI 配置」里填 base URL、模型名和 Key。价格估算只在模型名含 `deepseek` 时显示。
+
+## 技术栈
+
+Kotlin · Jetpack Compose (Material 3) · Room · ExoPlayer · CameraX · uCrop · OkHttp SSE · WebView 内离线 markdown-it + KaTeX
+
+数据库已迭代到 v5，全部通过 Room Migration 升级（升级逻辑出过两次事故，都记在文档里了）。
+
+## 文档
+
+- [更新日志](CHANGELOG.md)
+- [两轮 bug 复查记录](docs/2026-10-22-bug复查.md) —— 26 处问题，含成因分析
+- [设计决策记录](docs/) —— 合并发送、整节归纳、录音提速等
+
+## 已知限制
+
+- 没有上架应用商店，只能自己构建或下载 Release 里的 APK
+- 讲解依赖云端大模型：图会上传到你配置的服务商，离线不可用
+- 界面只有中文
+- 备份包含 API Key，**且不加密**，分享 zip 前请先清掉
+
+## 数据与隐私
+
+- 录音、图片、AI 回复只存在应用私有目录，无登录、无云同步；卸载即删除，请定期导出备份
+- 标记图片、提示词与备注（作为「涉及知识点」）会发送给你配置的 AI 服务；多轮追问随上下文一起发送。除此之外无任何上传
+
+## 反馈
+
+遇到问题或想加功能，开 [Issue](https://github.com/username-1234567/voice-note-ai-tutor/issues)。
+
+如果这个东西帮你省下了抄板书的时间，点个 Star 会让更多同学看到它。
+
+## 许可
+
+本项目尚未声明开源许可证。在补充 LICENSE 之前，默认保留所有权利。
