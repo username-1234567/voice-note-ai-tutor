@@ -23,6 +23,9 @@ import java.io.File
  * 和 PlaybackViewModel 里那套"整节对话"的区别：那边上下文来自某节课的标记，
  * 这边什么都不依赖，是学生自己发起的一次独立提问。
  */
+/** 课程照片选择器里的一项 */
+data class CoursePhoto(val path: String, val timeLabel: String, val note: String?)
+
 class ChatViewModel(app: Application, private val sessionId: Long) : AndroidViewModel(app) {
 
     private val container = (app as RecordApp).container
@@ -66,6 +69,44 @@ class ChatViewModel(app: Application, private val sessionId: Long) : AndroidView
                             dest.outputStream().use { input.copyTo(it) }
                         }
                         dest.takeIf { it.exists() && it.length() > 0 }?.absolutePath
+                    }.getOrNull()
+                }
+            }
+            _pending.value = _pending.value + saved
+        }
+    }
+
+    /** 课程里拍过的照片：按时间倒序，用于"从课程照片里挑一张来问" */
+    suspend fun coursePhotos(): List<CoursePhoto> {
+        val images = withContext(Dispatchers.IO) { container.db.markerImageDao().getAll() }
+        return images.sortedByDescending { it.id }.mapNotNull { img ->
+            val m = withContext(Dispatchers.IO) { container.db.markerDao().getById(img.markerId) }
+                ?: return@mapNotNull null
+            if (!File(img.filePath).exists()) return@mapNotNull null
+            CoursePhoto(
+                path = img.filePath,
+                timeLabel = com.suitanglu.app.data.Formatters.clockTime(m.offsetMs),
+                note = m.userText?.takeIf { it.isNotBlank() },
+            )
+        }
+    }
+
+    /** 直接用私有目录里的已有图片（课程照片），复制一份进 chat_images 独立管理 */
+    fun addLocalFiles(paths: List<String>) {
+        if (paths.isEmpty()) return
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                val dir = File(getApplication<Application>().filesDir, "chat_images").apply { mkdirs() }
+                paths.mapNotNull { p ->
+                    runCatching {
+                        val src = File(p)
+                        if (!src.exists()) return@runCatching null
+                        val dest = File(
+                            dir,
+                            "chat_${System.currentTimeMillis()}_${System.nanoTime() % 1000}.jpg",
+                        )
+                        src.copyTo(dest, overwrite = true)
+                        dest.absolutePath
                     }.getOrNull()
                 }
             }

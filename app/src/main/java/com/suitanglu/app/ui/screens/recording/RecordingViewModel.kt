@@ -39,6 +39,15 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
     private val recId: Long get() = RecordingBus.state.value?.recordingId ?: 0L
 
+    /** 录音途中回看：按时间排序的标记 + 首图缩略图 */
+    suspend fun loadMarkerStrip(): List<Pair<Marker, String?>> {
+        val id = recId
+        if (id == 0L) return emptyList()
+        return container.db.markerDao().getByRecording(id)
+            .sortedBy { it.offsetMs }
+            .map { m -> m to container.db.markerImageDao().getByMarker(m.id).firstOrNull()?.filePath }
+    }
+
     init {
         viewModelScope.launch {
             // 只在录音 ID 变化时查库，避免跟随计时器每 500ms 查一次

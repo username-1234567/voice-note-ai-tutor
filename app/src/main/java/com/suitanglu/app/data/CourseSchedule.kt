@@ -43,10 +43,11 @@ object CourseSchedule {
     ): Pair<String?, Int?> {
         val day = dayOfWeek(startTime)
         val slot = matchSlot(startTime, slotsOf(day)) ?: return null to null
-        if (endTime != null) {
-            val endSlot = matchSlot(endTime, slotsOf(day))
-            if (endSlot != null && endSlot.index != slot.index) return null to null
-        }
+        // 结束时间不参与命名。
+        //
+        // 原实现在"结束时刻落在另一节"时直接返回 null，结果拖堂五分钟、或者连着录了
+        // 两节课（09:59 → 11:34 跨过 11:30），整条录音就变成"未命名"——
+        // 而它 95% 的内容明明属于开始那一节。以开始时刻为准才是符合直觉的。
         val name = nameOf(day, slot.index)
         val cleaned = name?.trim()?.takeIf { it.isNotEmpty() } ?: return null to slot.index
         return cleaned to slot.index

@@ -126,6 +126,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.suitanglu.app.data.Formatters
+import com.suitanglu.app.data.ModelPricing
 import com.suitanglu.app.data.db.Marker
 import com.suitanglu.app.data.db.MarkerImage
 import com.suitanglu.app.data.db.MarkerTurn
@@ -202,6 +203,7 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
     val speed by vm.speed.collectAsState()
     val sendResult by vm.sendResult.collectAsState()
     val streaming by vm.streaming.collectAsState()
+    val aiModel by vm.aiModel.collectAsState()
     val playerError by vm.playerError.collectAsState()
     val allTurns by vm.allTurns.collectAsState()
     val turnsByMarker = remember(allTurns) { allTurns.groupBy { it.markerId } }
@@ -637,6 +639,17 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f),
                     )
+                    val totalCost = ModelPricing.format(
+                        ModelPricing.costOf(turnsByMarker.values.flatten(), aiModel),
+                    )
+                    if (totalCost.isNotEmpty()) {
+                        Text(
+                            totalCost,
+                            style = MaterialTheme.typography.labelMedium.tabularNumbers(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                    }
                     val reviewCount = markers.count { it.needsReview }
                     if (reviewCount > 0) {
                         FilterChip(
@@ -663,7 +676,7 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         Text("本条录音没有标记", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "录音时拍照标记的重点会出现在这里，并自动生成 AI 讲解。",
+                            "录音时拍的标记会出现在这里",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -704,6 +717,9 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         }
                     },
                     onToggleReview = { vm.toggleReview(marker) },
+                    costLabel = ModelPricing.format(
+                        ModelPricing.costOf(turnsByMarker[marker.id].orEmpty(), aiModel),
+                    ),
                     mergeMode = mergeMode,
                     mergeSelected = mergeSel.contains(marker.id),
                     onToggleMerge = {
@@ -1185,11 +1201,18 @@ fun MarkerProgressBar(
                 detectTapGestures { offset ->
                     val fraction = (offset.x / size.width).coerceIn(0f, 1f)
                     val ms = (fraction * totalMs).toLong()
-                    // 命中标记簇（容差 4%），簇内取离点击最近的标记
-                    val cluster = clusters.firstOrNull { c ->
-                        val cxFraction = (c.sumOf { it.offsetMs }.toFloat() / c.size) / totalMs
-                        kotlin.math.abs(cxFraction - fraction) < 0.04f
-                    }
+                    // 取离点击最近的那一簇，而不是第一个落在容差内的。
+                    // 标记密集时几簇的 4% 容差会互相重叠，firstOrNull 会稳定选中左边那个，
+                    // 于是"点哪个都跳到第一个"——看起来就是点不准。
+                    val cluster = clusters
+                        .filter { c ->
+                            val cx = (c.sumOf { it.offsetMs }.toFloat() / c.size) / totalMs
+                            kotlin.math.abs(cx - fraction) < 0.04f
+                        }
+                        .minByOrNull { c ->
+                            val cx = (c.sumOf { it.offsetMs }.toFloat() / c.size) / totalMs
+                            kotlin.math.abs(cx - fraction)
+                        }
                     if (cluster != null) {
                         onMarkerClick(
                             cluster.minByOrNull {
@@ -1330,6 +1353,8 @@ private fun MarkerCard(
     onResendMarker: () -> Unit,
     onEditImage: (MarkerImage) -> Unit,
     onToggleReview: () -> Unit,
+    /** 这一条讲解花了多少钱；空串表示不展示（非 DeepSeek 端点或还没生成过） */
+    costLabel: String,
     mergeMode: Boolean,
     mergeSelected: Boolean,
     onToggleMerge: () -> Unit,
@@ -1394,6 +1419,15 @@ private fun MarkerCard(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+                if (costLabel.isNotEmpty()) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        costLabel,
+                        style = MaterialTheme.typography.labelSmall.tabularNumbers(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
                 Text(
                     markerPreview(marker),
@@ -1492,7 +1526,7 @@ private fun MarkerCard(
                         }
                     } else when (marker.aiStatus) {
                         Marker.AI_PENDING -> Text(
-                            "待发送 · 修完图后点页面顶部的「发送全部」",
+                            "待发送",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

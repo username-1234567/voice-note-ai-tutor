@@ -18,9 +18,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import com.suitanglu.app.data.db.Marker
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,6 +79,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -121,6 +124,11 @@ fun RecordingScreen(
     val startError by RecordingBus.startError.collectAsState()
     val pending by vm.pendingImages.collectAsState()
     val markerCount by vm.markerCount.collectAsState()
+    // 录音途中回看已标记
+    var showMarkerStrip by remember { mutableStateOf(false) }
+    val markerStrip by produceState(emptyList<Pair<Marker, String?>>(), showMarkerStrip, markerCount) {
+        if (showMarkerStrip) value = vm.loadMarkerStrip()
+    }
     // 必须订阅：不订阅时 cameraMode 永远是默认值，设置的“应用内相机”不会生效
     val general by vm.generalConfig.collectAsState()
 
@@ -196,17 +204,74 @@ fun RecordingScreen(
         }
     }
 
-    val s = state
-    if (s == null) {
-        // 首次进入：启动前台录音服务；等待服务就绪时显示启动中。
-        // attemptedStart（saveable）防止停止录音瞬间（bus 清空、页面尚未退出）重复触发启动；
-        // 进程被杀恢复的页面同样不再自动开新录音。
-        LaunchedEffect(Unit) {
-            if (!attemptedStart) {
-                attemptedStart = true
-                RecordingService.start(context)
+    if (showMarkerStrip) {
+        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { showMarkerStrip = false }) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
+                Text(
+                    "这节课的标记（${markerStrip.size}）",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(start = 20.dp, bottom = 8.dp),
+                )
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth()) {
+                    items(markerStrip.size) { i ->
+                        val (m, path) = markerStrip[i]
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (path != null) {
+                                coil.compose.AsyncImage(
+                                    model = java.io.File(path),
+                                    contentDescription = null,
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
+                                )
+                            } else {
+                                Box(
+                                    Modifier
+                                        .size(56.dp)
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    com.suitanglu.app.data.Formatters.clockTime(m.offsetMs),
+                                    style = MaterialTheme.typography.titleSmall.tabularNumbers(),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    m.userText?.takeIf { it.isNotBlank() } ?: "拍照标记",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
+
+    val s = state
+    // 这个判断必须在 if (s == null) 外面。
+    //
+    // 原先它写在里面：从首页横幅进入时录音已经在跑，s 非空，这个分支压根没被组合过，
+    // attemptedStart 一直是 false。等用户点"结束"、bus 被清空，分支首次组合 → 触发一次 start；
+    // 而那一刻服务正在收尾（busy=true、recorder 已置空），于是被记成 restartAfterStop，
+    // 收尾一结束就自动开了一条新录音 —— 用户看到的就是"结束完又冒出来一条"。
+    LaunchedEffect(Unit) {
+        if (!attemptedStart) {
+            attemptedStart = true
+            if (RecordingBus.state.value == null) RecordingService.start(context)
+        }
+    }
+    if (s == null) {
         Column(
             Modifier.fillMaxSize().padding(32.dp),
             verticalArrangement = Arrangement.Center,
@@ -328,7 +393,17 @@ fun RecordingScreen(
                         Text(
                             "已标记 $markerCount 个",
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = if (markerCount > 0) {
+                                androidx.compose.ui.text.style.TextDecoration.Underline
+                            } else {
+                                null
+                            },
+                            modifier = if (markerCount > 0) {
+                                Modifier.clickable { showMarkerStrip = true }
+                            } else {
+                                Modifier
+                            },
                         )
                         Spacer(Modifier.width(8.dp))
                         Text("·", color = MaterialTheme.colorScheme.outline)

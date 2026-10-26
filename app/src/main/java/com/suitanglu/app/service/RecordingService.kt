@@ -263,8 +263,8 @@ class RecordingService : Service() {
                         level = (rawAmplitude / 32767f).coerceIn(0f, 1f),
                     ),
                 )
-                if (now - lastNotify > 5_000) {
-                    // 通知栏时长定期刷新
+                if (now - lastNotify >= 1_000) {
+                    // 通知栏时长每秒刷新：5 秒一跳会让人以为卡住了
                     runCatching { updateNotification() }
                     lastNotify = now
                 }

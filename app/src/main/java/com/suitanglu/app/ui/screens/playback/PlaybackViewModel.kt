@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -42,6 +43,11 @@ class PlaybackViewModel(app: Application, val recordingId: Long) : AndroidViewMo
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val streaming = container.aiSendManager.streaming
+
+    /** 当前模型：只有 DeepSeek 官方端点才展示花费，第三方兼容服务价格不可知 */
+    val aiModel: StateFlow<String> = container.settings.aiConfig
+        .map { it.model }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     private val _player = MutableStateFlow<ExoPlayer?>(null)
     val player: StateFlow<ExoPlayer?> = _player

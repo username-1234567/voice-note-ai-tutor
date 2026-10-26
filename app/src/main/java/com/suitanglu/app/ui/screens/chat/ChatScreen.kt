@@ -4,6 +4,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -34,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -42,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -82,6 +87,10 @@ fun ChatScreen(
     val pending by vm.pending.collectAsStateWithLifecycle()
 
     var text by rememberSaveable { mutableStateOf("") }
+    var showCoursePhotos by remember { mutableStateOf(false) }
+    val coursePhotos by produceState(emptyList<CoursePhoto>(), showCoursePhotos) {
+        if (showCoursePhotos) value = vm.coursePhotos()
+    }
     val listState = rememberLazyListState()
 
     val picker = rememberLauncherForActivityResult(
@@ -94,6 +103,57 @@ fun ChatScreen(
     LaunchedEffect(messages.size, draft.length) {
         if (messages.isNotEmpty() || draft.isNotEmpty()) {
             listState.animateScrollToItem((messages.size + if (draft.isNotEmpty()) 1 else 0).coerceAtLeast(0))
+        }
+    }
+
+    if (showCoursePhotos) {
+        ModalBottomSheet(onDismissRequest = { showCoursePhotos = false }) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                Text(
+                    if (coursePhotos.isEmpty()) "还没有拍过课程照片" else "课程照片（${coursePhotos.size}）",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(start = 20.dp, bottom = 10.dp),
+                )
+                LazyColumn(Modifier.fillMaxWidth()) {
+                    val rows = coursePhotos.chunked(3)
+                    items(rows.size) { i ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            rows[i].forEach { photo ->
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            vm.addLocalFiles(listOf(photo.path))
+                                            showCoursePhotos = false
+                                        },
+                                ) {
+                                    AsyncImage(
+                                        model = File(photo.path),
+                                        contentDescription = photo.timeLabel,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                    Text(
+                                        photo.timeLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = androidx.compose.ui.graphics.Color.White,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
+                                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                                    )
+                                }
+                            }
+                            repeat(3 - rows[i].size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -157,6 +217,12 @@ fun ChatScreen(
                             enabled = !busy,
                         ) {
                             Icon(Icons.Outlined.Image, contentDescription = "选图")
+                        }
+                        IconButton(
+                            onClick = { showCoursePhotos = true },
+                            enabled = !busy,
+                        ) {
+                            Icon(Icons.Outlined.PhotoLibrary, contentDescription = "课程照片")
                         }
                         OutlinedTextField(
                             value = text,
