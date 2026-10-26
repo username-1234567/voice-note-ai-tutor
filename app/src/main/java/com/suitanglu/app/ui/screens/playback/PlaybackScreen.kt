@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -53,7 +54,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Edit
@@ -82,6 +86,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SnackbarHost
@@ -205,6 +210,12 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
     // 只看待复习：被筛掉的标记仍然留在进度条上，只是不在列表里
     var onlyReview by rememberSaveable { mutableStateOf(false) }
     val visibleMarkers = if (onlyReview) markers.filter { it.needsReview } else markers
+    // 合并发送：选中的多个标记共用一次请求、一条讲解
+    var mergeMode by remember { mutableStateOf(false) }
+    val mergeSel = remember { androidx.compose.runtime.mutableStateListOf<Long>() }
+    // 非空表示正在编辑该标记的发送提示词
+    var promptTarget by remember { mutableStateOf<Marker?>(null) }
+    var mergePromptOpen by remember { mutableStateOf(false) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     // 播放器滚出屏幕后才出现迷你条：它只在"看不见控制"时才有存在价值
@@ -243,11 +254,70 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
         }
     }
 
+    if (mergePromptOpen) {
+        PromptDialog(
+            title = "合并发送（${mergeSel.size} 个标记）",
+            hint = "这些标记的图片会放进同一次请求、共用一条讲解。留空则用设置页里的全局提示词。",
+            initial = "",
+            onDismiss = { mergePromptOpen = false },
+            onConfirm = { prompt ->
+                vm.sendMerged(mergeSel.toList(), prompt)
+                mergePromptOpen = false
+                mergeMode = false
+                mergeSel.clear()
+            },
+        )
+    }
+
+    promptTarget?.let { target ->
+        PromptDialog(
+            title = "发送提示词",
+            hint = "只对这一个标记生效，会替换全局提示词；清空则恢复默认。",
+            initial = target.customPrompt.orEmpty(),
+            onDismiss = { promptTarget = null },
+            onConfirm = { prompt ->
+                vm.saveCustomPrompt(target.id, prompt)
+                promptTarget = null
+            },
+        )
+    }
+
     Scaffold(
         // 追问输入框在卡片里：键盘弹起时整页缩到键盘上方，
         // 否则输入框和迷你播放条都会被埋在输入法下面
         modifier = Modifier.imePadding(),
         snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            if (mergeMode) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 8.dp,
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "已选 ${mergeSel.size} 个",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { mergeMode = false; mergeSel.clear() }) {
+                            Text("取消")
+                        }
+                        Button(
+                            onClick = { mergePromptOpen = true },
+                            enabled = mergeSel.size >= 2,
+                        ) {
+                            Text("合并发送")
+                        }
+                    }
+                }
+            }
+        },
         topBar = {
             PlaybackTopBar(
                 title = recording?.title ?: "录音回放",
@@ -515,6 +585,11 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                                 style = MaterialTheme.typography.labelLarge,
                             )
                         }
+                        if (unsent >= 2) {
+                            TextButton(onClick = { mergeMode = true; mergeSel.clear() }) {
+                                Text("合并", style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
                         // 窄屏上这行原本会被挤出屏幕：让计数可压缩并右对齐，而不是把按钮顶出去
                         Text(
                             "$unsent 个未发送",
@@ -603,8 +678,13 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                     turns = turnsByMarker[marker.id].orEmpty(),
                     streaming = streaming?.takeIf { it.markerId == marker.id },
                     onClick = {
-                        vm.jumpToMarker(marker)
-                        expandedMarkerId = if (expandedMarkerId == marker.id) null else marker.id
+                        if (mergeMode) {
+                            if (mergeSel.contains(marker.id)) mergeSel.remove(marker.id)
+                            else mergeSel.add(marker.id)
+                        } else {
+                            vm.jumpToMarker(marker)
+                            expandedMarkerId = if (expandedMarkerId == marker.id) null else marker.id
+                        }
                     },
                     onToggleExpand = {
                         expandedMarkerId = if (expandedMarkerId == marker.id) null else marker.id
@@ -624,6 +704,25 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         }
                     },
                     onToggleReview = { vm.toggleReview(marker) },
+                    mergeMode = mergeMode,
+                    mergeSelected = mergeSel.contains(marker.id),
+                    onToggleMerge = {
+                        if (mergeSel.contains(marker.id)) mergeSel.remove(marker.id)
+                        else mergeSel.add(marker.id)
+                    },
+                    onEditPrompt = { promptTarget = marker },
+                    onOpenMerged = {
+                        val headId = marker.mergedInto
+                        if (headId != null) {
+                            expandedMarkerId = headId
+                            val idx = markers.indexOfFirst { it.id == headId }
+                            if (idx >= 0) {
+                                scope.launch {
+                                    listState.animateScrollToItem(MARKER_ITEM_OFFSET + idx)
+                                }
+                            }
+                        }
+                    },
                     imageVersion = imageVersion,
                     loadImages = { vm.imagesOf(marker) },
                 )
@@ -954,6 +1053,46 @@ private fun PlaybackTopBar(
 }
 
 
+/** 发送前编辑提示词的小对话框；合并发送和单条自定义共用 */
+@Composable
+private fun PromptDialog(
+    title: String,
+    hint: String,
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by remember(initial) { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 8,
+                    placeholder = { Text("留空使用全局提示词") },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }) { Text("确定") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
 /**
  * 标记卡的标题行：优先用用户自己的备注，其次取 AI 回复的第一段有效文字。
  * 旧实现按 20 个字符硬截断，经常切断词语；这里按"第一个非空行 + 去 Markdown 记号"取。
@@ -1191,6 +1330,11 @@ private fun MarkerCard(
     onResendMarker: () -> Unit,
     onEditImage: (MarkerImage) -> Unit,
     onToggleReview: () -> Unit,
+    mergeMode: Boolean,
+    mergeSelected: Boolean,
+    onToggleMerge: () -> Unit,
+    onEditPrompt: () -> Unit,
+    onOpenMerged: () -> Unit,
     /** 改过图之后自增，用来让已展开的卡片重新拉一次图片列表 */
     imageVersion: Int,
     loadImages: suspend (Marker) -> List<MarkerImage>,
@@ -1231,6 +1375,18 @@ private fun MarkerCard(
                 ),
         ) {
             Row(verticalAlignment = Alignment.Top) {
+                if (mergeMode) {
+                    Icon(
+                        if (mergeSelected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                        contentDescription = if (mergeSelected) "取消选择" else "选中",
+                        tint = if (mergeSelected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.padding(top = 2.dp, end = 8.dp).size(20.dp),
+                    )
+                }
                 // 时间是小节号：等宽、主色，扫列表时先看这一列
                 Text(
                     Formatters.clockTime(marker.offsetMs),
@@ -1325,7 +1481,16 @@ private fun MarkerCard(
 
                 // ===== 多轮对话 =====
                 if (turns.isEmpty()) {
-                    when (marker.aiStatus) {
+                    if (marker.mergedInto != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "已并入合并讲解",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            TextButton(onClick = onOpenMerged) { Text("查看") }
+                        }
+                    } else when (marker.aiStatus) {
                         Marker.AI_PENDING -> Text(
                             "待发送 · 修完图后点页面顶部的「发送全部」",
                             style = MaterialTheme.typography.labelMedium,
@@ -1355,6 +1520,14 @@ private fun MarkerCard(
                             TextButton(onClick = onResendMarker) {
                                 Text("重新生成", style = MaterialTheme.typography.labelMedium)
                             }
+                        }
+                    }
+                    // 发送前就能改：钉住这条要 AI 怎么讲，而不是发送后再去改问题
+                    if (marker.mergedInto == null) {
+                        TextButton(onClick = onEditPrompt) {
+                            Icon(Icons.Outlined.Edit, contentDescription = null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("发送提示词", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 } else {

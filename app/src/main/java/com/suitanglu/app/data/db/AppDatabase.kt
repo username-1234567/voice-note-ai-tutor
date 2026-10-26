@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatSession::class,
         DirectMessage::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -126,6 +126,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v4 → v5：标记支持自定义提示词、支持多标记合并成一条讲解 */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 两列都可空，不需要 DEFAULT，也就不需要同步 @ColumnInfo
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `customPrompt` TEXT")
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `mergedInto` INTEGER")
+            }
+        }
+
         /**
          * 全部迁移，按顺序。
          *
@@ -133,7 +142,8 @@ abstract class AppDatabase : RoomDatabase() {
          * 用 createFromFile 打开却没注册迁移的话，Room 会直接抛
          * "A migration from 2 to 3 was required but not found"，用户看到的就是"导入失败"。
          */
-        val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        val ALL_MIGRATIONS: Array<Migration> =
+            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(

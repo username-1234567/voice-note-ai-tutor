@@ -168,6 +168,9 @@ class AiSendManager(
      */
     private suspend fun generateTurn(marker: Marker, turn: MarkerTurn): Boolean {
         val now = System.currentTimeMillis()
+        // 这条要自己讲了，之前"并入别处"的标记必须摘掉，
+        // 否则界面上会同时显示"已并入合并讲解"和自己的回答
+        db.markerDao().clearMerged(marker.id)
         val ai = settings.aiConfigNow()
         if (ai.apiKey.isBlank()) {
             failTurn(turn, "未配置 API Key，请到设置页填写")
@@ -183,9 +186,11 @@ class AiSendManager(
 
         var current = turn
         if (current.orderIndex == 0 && current.question.isNullOrBlank()) {
-            // 首轮问题 = 提示词 + 涉及知识点（标记备注），持久化以便对话中显示与编辑
+            // 首轮问题 = 提示词 + 涉及知识点（标记备注），持久化以便对话中显示与编辑。
+            // 标记自己设过提示词就用它，否则退回设置页的全局提示词
+            val basePrompt = marker.customPrompt?.takeIf { it.isNotBlank() } ?: ai.prompt
             val knowledge = marker.userText?.takeIf { it.isNotBlank() }?.let { "\n涉及知识点：$it" }.orEmpty()
-            current = current.copy(question = ai.prompt + knowledge)
+            current = current.copy(question = basePrompt + knowledge)
             db.markerTurnDao().update(current)
         }
 
@@ -318,6 +323,129 @@ class AiSendManager(
     }
 
     /** 单条重发入口：有首轮则重新生成，没有则补建首轮 */
+    /**
+     * 合并发送：把 N 个标记的图片放进同一次请求，共用一条讲解。
+     *
+     * 拍一页课件常常要分两三张（左半页、右半页、补充公式、老师的板书），
+     * 各发各的模型看不到彼此，只能各讲一段；合并之后它面对的是同一处内容，
+     * 能指出"第二张那个符号就是第一张里的 μ"。
+     *
+     * 结果只落在组首那一轮上，其余成员记 [Marker.mergedInto] 指过来，
+     * 不重复存一份回答——否则同一段话会在列表里出现三四次。
+     */
+    suspend fun sendMerged(markerIds: List<Long>, prompt: String): Boolean {
+        if (markerIds.size < 2) return false
+        if (!busy.compareAndSet(false, true)) return false
+        _activeRecordingId.value = db.markerDao().getById(markerIds.first())?.recordingId
+        try {
+            val members = markerIds.mapNotNull { db.markerDao().getById(it) }
+            if (members.size < 2) return false
+            val head = members.first()
+            val images = members
+                .flatMap { db.markerImageDao().getByMarker(it.id) }
+                .map { File(it.filePath) }
+                .filter { it.exists() }
+                .distinctBy { it.absolutePath }
+            if (images.isEmpty()) {
+                val msg = "这些标记下没有图片"
+                members.forEach {
+                    db.markerDao().updateAi(it.id, Marker.AI_FAILED, null, msg, System.currentTimeMillis())
+                }
+                return false
+            }
+
+            val ai = settings.aiConfigNow()
+            if (ai.apiKey.isBlank()) {
+                val msg = "未配置 API Key"
+                members.forEach {
+                    db.markerDao().updateAi(it.id, Marker.AI_FAILED, null, msg, System.currentTimeMillis())
+                }
+                return false
+            }
+
+            val effectivePrompt = prompt.ifBlank { ai.prompt }
+            val question = buildString {
+                append(effectivePrompt)
+                val knowledge = members.mapNotNull { it.userText?.takeIf { t -> t.isNotBlank() } }
+                if (knowledge.isNotEmpty()) {
+                    append("\n\n涉及知识点：")
+                    knowledge.forEach { append("\n- ").append(it) }
+                }
+                if (images.size > 1) {
+                    append("\n\n（附件是同一处内容的 ")
+                    append(images.size)
+                    append(" 张图，请合起来讲；重复的部分不用逐张复述。）")
+                }
+            }
+
+            // 合并即重做：之前的单条讲解（若有）整体作废
+            db.markerTurnDao().deleteByMarker(head.id)
+            val turnId = db.markerTurnDao().insert(
+                MarkerTurn(markerId = head.id, orderIndex = 0, question = question),
+            )
+            var current = MarkerTurn(markerId = head.id, orderIndex = 0, question = question, id = turnId)
+
+            val now = System.currentTimeMillis()
+            db.markerTurnDao().update(current.copy(status = MarkerTurn.TURN_SENDING, updatedAt = now))
+            db.markerDao().updateAi(head.id, Marker.AI_SENDING, null, null, now)
+            members.drop(1).forEach {
+                db.markerDao().updateAi(it.id, Marker.AI_SENDING, null, null, now)
+            }
+
+            val buffer = StringBuilder()
+            var lastFlush = 0L
+            try {
+                val general = settings.generalConfigNow()
+                val client = DeepSeekClient(ai, general.compressImages, general.compressQuality)
+                val (answer, usage) = client.chat(
+                    listOf(ChatMessage("user", question, images)),
+                ) { delta ->
+                    buffer.append(delta)
+                    val t = System.currentTimeMillis()
+                    if (t - lastFlush > 300) {
+                        lastFlush = t
+                        _streaming.value = StreamingState(head.id, turnId, buffer.toString())
+                    }
+                }
+                _streaming.value = null
+                val t = System.currentTimeMillis()
+                db.markerTurnDao().update(
+                    current.copy(
+                        status = MarkerTurn.TURN_SUCCESS,
+                        answer = answer,
+                        promptTokens = usage.promptTokens,
+                        cacheHitTokens = usage.cacheHitTokens,
+                        completionTokens = usage.completionTokens,
+                        finishReason = usage.finishReason,
+                        updatedAt = t,
+                    ),
+                )
+                db.markerDao().updateAi(head.id, Marker.AI_SUCCESS, answer, null, t)
+                members.drop(1).forEach { m ->
+                    db.markerDao().mergeInto(m.id, head.id, Marker.AI_SUCCESS, t)
+                }
+                return true
+            } catch (e: CancellationException) {
+                _streaming.value = null
+                return false
+            } catch (e: Exception) {
+                _streaming.value = null
+                val t = System.currentTimeMillis()
+                val msg = e.message ?: e.javaClass.simpleName
+                failTurn(current, msg)
+                db.markerDao().updateAi(head.id, Marker.AI_FAILED, null, msg, t)
+                members.drop(1).forEach {
+                    db.markerDao().updateAi(it.id, Marker.AI_FAILED, null, msg, t)
+                }
+                return false
+            }
+        } finally {
+            _activeRecordingId.value = null
+            _streaming.value = null
+            busy.set(false)
+        }
+    }
+
     suspend fun sendSingle(markerId: Long): Boolean {
         // 和批量发送共用同一个 busy：
         // 两边并发时会各自查到"还没有 orderIndex=0 的轮次"，然后各插一条，

@@ -89,6 +89,19 @@ interface MarkerDao {
     @Query("UPDATE markers SET needsReview = :value, updatedAt = :now WHERE id = :id")
     suspend fun setNeedsReview(id: Long, value: Boolean, now: Long)
 
+    /** 把标记并入另一条标记的合并讲解：自己不再单独持有回答 */
+    @Query(
+        "UPDATE markers SET mergedInto = :headId, aiStatus = :status, aiResponse = NULL, " +
+            "aiError = NULL, updatedAt = :now WHERE id = :id",
+    )
+    suspend fun mergeInto(id: Long, headId: Long, status: String, now: Long)
+
+    @Query("UPDATE markers SET customPrompt = :prompt, updatedAt = :now WHERE id = :id")
+    suspend fun setCustomPrompt(id: Long, prompt: String?, now: Long)
+
+    @Query("UPDATE markers SET mergedInto = NULL WHERE id = :id")
+    suspend fun clearMerged(id: Long)
+
     /**
      * 原子翻转星标。
      * 用"读当前值再取反"的写法时，连点两下会两次都读到旧值，第二次等于没点。

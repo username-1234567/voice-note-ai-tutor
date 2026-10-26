@@ -53,6 +53,20 @@ data class Marker(
      */
     @androidx.room.ColumnInfo(defaultValue = "0")
     val needsReview: Boolean = false,
+
+    /**
+     * 发送前自定义的提示词。为空时用设置页里的全局提示词。
+     * 和 userText（涉及知识点）不是一回事：那是"这页讲的是什么"，这是"要 AI 怎么讲"。
+     */
+    val customPrompt: String? = null,
+
+    /**
+     * 并入哪一条标记的合并讲解（存对方的 markerId）。
+     *
+     * 几张图拍的是同一处内容时，一起发一次请求、共享一条回答，
+     * 比每张各发一次既省钱又能让 AI 看到上下文。非空表示这条自己不再单独发。
+     */
+    val mergedInto: Long? = null,
 ) {
     companion object {
         const val AI_PENDING = "pending"

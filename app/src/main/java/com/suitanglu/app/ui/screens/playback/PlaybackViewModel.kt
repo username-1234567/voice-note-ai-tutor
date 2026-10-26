@@ -193,6 +193,34 @@ class PlaybackViewModel(app: Application, val recordingId: Long) : AndroidViewMo
         }
     }
 
+    /**
+     * 合并发送：选中的多个标记共用一次请求、一条讲解。
+     *
+     * [prompt] 是这次请求的提示词，界面会预填全局提示词让用户改。
+     */
+    fun sendMerged(markerIds: List<Long>, prompt: String) {
+        if (markerIds.size < 2) return
+        container.appScope.launch {
+            val ok = container.aiSendManager.sendMerged(markerIds, prompt)
+            _sendResult.value = if (ok) {
+                "已把 ${markerIds.size} 个标记合并成一条讲解"
+            } else {
+                "合并发送失败，请检查网络或图片后重试"
+            }
+        }
+    }
+
+    /** 保存发送前的自定义提示词；传空则恢复使用全局提示词 */
+    fun saveCustomPrompt(markerId: Long, prompt: String) {
+        container.appScope.launch {
+            container.db.markerDao().setCustomPrompt(
+                markerId,
+                prompt.trim().takeIf { it.isNotEmpty() },
+                System.currentTimeMillis(),
+            )
+        }
+    }
+
     /** 追问：带完整上下文 */
     fun followUp(markerId: Long, question: String) {
         container.appScope.launch {
