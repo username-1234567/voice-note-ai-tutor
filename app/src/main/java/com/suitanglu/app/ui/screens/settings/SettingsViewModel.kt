@@ -22,6 +22,20 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val container = AppGraph.get(app)
 
+    val reminderConfig: StateFlow<Pair<Boolean, Int>> = container.settings.reminderConfig
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false to 10)
+
+    fun saveReminder(enabled: Boolean, leadMinutes: Int) {
+        viewModelScope.launch {
+            container.settings.setReminder(enabled, leadMinutes)
+            runCatching {
+                com.suitanglu.app.reminder.ReminderScheduler.reschedule(
+                    getApplication(), container.settings,
+                )
+            }
+        }
+    }
+
     val aiConfig: StateFlow<AiConfig> = container.settings.aiConfig
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AiConfig())
 

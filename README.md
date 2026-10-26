@@ -9,7 +9,7 @@
 ![platform](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)
 ![kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
-![release](https://img.shields.io/badge/release-v1.4.1-2ea44f)
+![release](https://img.shields.io/badge/release-v1.5.0-2ea44f)
 ![size](https://img.shields.io/badge/APK-6.7%20MB-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-3da639)
 
@@ -43,6 +43,7 @@
 - 来电或音频焦点丢失自动暂停并记录，回放页能看到截断点
 - 连续一分钟没人说话提醒一次（老师走到后排、手机被书挡住）
 - 可按课程表自动命名：`{课程名}_{yyyyMMdd_HHmmss}.m4a`
+- 上课前按课程表提醒，提前几分钟自己填（1–60）
 
 ### 标记
 
@@ -50,6 +51,11 @@
 - 一个标记可挂多张图；录音途中能回看已拍的内容
 - 课后可以重新裁剪，旧讲解自动作废、退回待发送
 - 标记「待复习」（我还没弄懂），列表可只看星标
+
+### 看图
+
+- 全屏双指缩放（1×–6×），放大后单指拖动
+- 播放条上的标记点按 AI 状态着色，点或拖都能跳
 
 ### AI 讲解
 

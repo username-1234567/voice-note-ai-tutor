@@ -20,6 +20,7 @@ import com.suitanglu.app.ui.screens.camera.InAppCameraScreen
 import com.suitanglu.app.ui.screens.chat.ChatListScreen
 import com.suitanglu.app.ui.screens.chat.ChatScreen
 import com.suitanglu.app.ui.screens.home.HomeScreen
+import com.suitanglu.app.ui.screens.onboarding.OnboardingGate
 import com.suitanglu.app.ui.screens.render.RenderScreen
 import com.suitanglu.app.ui.screens.playback.PlaybackScreen
 import com.suitanglu.app.ui.screens.recording.RecordingScreen
@@ -54,6 +55,7 @@ fun RecordNavHost(
     hasNotificationPermission: Boolean,
     onRequestPermissions: () -> Unit,
 ) {
+    OnboardingGate {
     val nav = rememberNavController()
     // 页面切换：淡入 + 轻微横移。进入 320ms，退出 210ms（约 65%，离开要比进入快）；
     // 位移只有 1/12 屏宽，够表达方向又不至于像抽屉。
@@ -181,5 +183,6 @@ fun RecordNavHost(
         composable(Routes.RECYCLE) {
             RecycleBinScreen(onBack = { nav.popBackStack() })
         }
+    }
     }
 }

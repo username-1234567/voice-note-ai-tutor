@@ -45,6 +45,10 @@ class RecordApp : Application() {
         super.onCreate()
         container = AppGraph.init(this)
         recoverUnfinishedRecordings()
+        // 开机/启动时重排上课提醒：闹钟在重启后会清空
+        container.appScope.launch {
+            runCatching { com.suitanglu.app.reminder.ReminderScheduler.reschedule(this@RecordApp, container.settings) }
+        }
     }
 
     /** 进程被杀后，启动时恢复未完成录音 */

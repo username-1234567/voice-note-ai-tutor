@@ -129,8 +129,18 @@ class RecordingRepository(
             val target = File(recordingsDir, "$name.m4a")
             if (oldFile.renameTo(target)) path = target.absolutePath
         }
+        // 改名后如果正好命中课表里的某个课程名，把归属也切过去，
+        // 否则会出现名字叫高等数学、颜色还是原来那门课的错位
+        val matchedCourse = runCatching {
+            settings.allCourseNamesNow().firstOrNull { it == cleaned }
+        }.getOrNull()
         db.recordingDao().update(
-            rec.copy(title = cleaned, filePath = path, updatedAt = System.currentTimeMillis()),
+            rec.copy(
+                title = cleaned,
+                courseName = matchedCourse ?: rec.courseName,
+                filePath = path,
+                updatedAt = System.currentTimeMillis(),
+            ),
         )
         return true
     }

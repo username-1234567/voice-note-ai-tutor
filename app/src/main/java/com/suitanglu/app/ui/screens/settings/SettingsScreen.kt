@@ -1,6 +1,13 @@
 package com.suitanglu.app.ui.screens.settings
 
 import android.os.Build
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +34,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -60,6 +69,7 @@ fun SettingsScreen(
 ) {
     val vm: SettingsViewModel = viewModel()
     val general by vm.generalConfig.collectAsState()
+    val reminder by vm.reminderConfig.collectAsState()
     val ai by vm.aiConfig.collectAsState()
     val updateState by vm.updateState.collectAsState()
 
@@ -128,6 +138,57 @@ fun SettingsScreen(
                     tint = MaterialTheme.colorScheme.primary,
                     onClick = onOpenRender,
                 )
+            }
+
+            SettingsSection("上课提醒") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("课前提醒", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            if (reminder.first) "提前 ${reminder.second} 分钟，按课程表排期"
+                            else "关闭",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = reminder.first,
+                        onCheckedChange = { vm.saveReminder(it, reminder.second) },
+                    )
+                }
+                if (reminder.first) {
+                    // 自己输入而不是选固定档：有人要 3 分钟（走到教室），有人要 30 分钟（先预习）
+                    var leadText by rememberSaveable(reminder.second) {
+                        mutableStateOf(reminder.second.toString())
+                    }
+                    LaunchedEffect(leadText) {
+                        val v = leadText.toIntOrNull() ?: return@LaunchedEffect
+                        if (v in 1..60 && v != reminder.second) {
+                            // 停手 500ms 再落库：连续敲两位数不会触发两次重排闹钟
+                            delay(500)
+                            vm.saveReminder(true, v)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("提前", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.width(10.dp))
+                        OutlinedTextField(
+                            value = leadText,
+                            onValueChange = { raw ->
+                                leadText = raw.filter { it.isDigit() }.take(2)
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            suffix = { Text("分钟") },
+                            modifier = Modifier.width(150.dp),
+                        )
+                    }
+                    Text(
+                        "1–60 分钟。只对配置了课程名的时段生效，周末不提醒；系统省电策略可能让通知稍晚几分钟。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             SettingsSection("录音设置") {

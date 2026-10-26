@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -761,10 +762,12 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                     title = miniRec.title,
                     positionMs = position,
                     durationMs = duration.takeIf { it > 0 } ?: miniRec.durationMs,
+                    markers = markers,
                     playing = playing,
                     speed = speed,
                     onTogglePlay = { vm.togglePlay() },
                     onSpeed = { showSpeedMenu = true },
+                    onSeek = { vm.seekTo(it) },
                     onExpand = { scope.launch { listState.animateScrollToItem(0) } },
                 )
             }
@@ -1293,9 +1296,9 @@ fun MarkerProgressBar(
                 c.all { it.aiStatus == Marker.AI_SUCCESS } -> successColor
                 else -> pendingColor
             }
-            drawCircle(color = trackColor, radius = barHeight * 1.4f + borderStroke, center = Offset(x, y))
-            drawCircle(color = color, radius = barHeight * 1.4f, center = Offset(x, y))
-            drawCircle(color = Color.White, radius = barHeight * 0.6f, center = Offset(x, y))
+            drawCircle(color = trackColor, radius = barHeight * 1.05f + borderStroke, center = Offset(x, y))
+            drawCircle(color = color, radius = barHeight * 1.05f, center = Offset(x, y))
+            drawCircle(color = Color.White, radius = barHeight * 0.45f, center = Offset(x, y))
             if (c.size > 1) {
                 val badgeR = 8.dp.toPx()
                 val badgeCenter = Offset(x, y - barHeight * 1.4f - badgeR)
@@ -1682,12 +1685,13 @@ private fun MarkerCard(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                AsyncImage(
+                // 双指缩放 + 放大后拖动：板书字小的时候全靠这个
+                com.suitanglu.app.ui.components.ZoomableImage(
                     model = img.filePath,
                     contentDescription = null,
-                    contentScale = ContentScale.Fit,
+                    background = androidx.compose.ui.graphics.Color.Transparent,
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .fillMaxSize()
                         .padding(vertical = 48.dp)
                         .graphicsLayer {
                             scaleX = imageScale
@@ -1936,23 +1940,88 @@ private fun formatSpeed(value: Float): String {
     return "$text×"
 }
 
+/** 迷你条上的细进度条：带标记点、可点可拖。高度 16dp 只为手指服务，视觉上仍是 3dp 的线 */
+@Composable
+private fun MiniProgressBar(
+    positionMs: Long,
+    durationMs: Long,
+    markers: List<Marker>,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val extra = MaterialTheme.recordColors
+    val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    val playedColor = MaterialTheme.colorScheme.primary
+    val dotBorder = MaterialTheme.colorScheme.surface
+    val failColor = MaterialTheme.colorScheme.error
+    val total = durationMs.coerceAtLeast(1)
+    val fraction = (positionMs.toFloat() / total).coerceIn(0f, 1f)
+
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(16.dp)
+            .pointerInput(total) {
+                detectTapGestures { o ->
+                    onSeek(((o.x / size.width).coerceIn(0f, 1f) * total).toLong())
+                }
+            }
+            .pointerInput(total) {
+                detectHorizontalDragGestures { change, _ ->
+                    onSeek(((change.position.x / size.width).coerceIn(0f, 1f) * total).toLong())
+                }
+            },
+    ) {
+        val lineH = 3.dp.toPx()
+        val y = size.height / 2
+        drawRoundRect(
+            color = trackColor,
+            topLeft = Offset(0f, y - lineH / 2),
+            size = Size(size.width, lineH),
+            cornerRadius = CornerRadius(lineH / 2),
+        )
+        drawRoundRect(
+            color = playedColor,
+            topLeft = Offset(0f, y - lineH / 2),
+            size = Size(size.width * fraction, lineH),
+            cornerRadius = CornerRadius(lineH / 2),
+        )
+        markers.forEach { m ->
+            val x = (m.offsetMs.toFloat() / total).coerceIn(0f, 1f) * size.width
+            val c = when (m.aiStatus) {
+                Marker.AI_SUCCESS -> extra.success
+                Marker.AI_FAILED -> failColor
+                else -> extra.pending
+            }
+            // 先描一圈底色再画点：压在已播放部分上时不会糊成一片
+            drawCircle(
+                color = dotBorder,
+                radius = 3.2.dp.toPx(),
+                center = Offset(x, y),
+            )
+            drawCircle(color = c, radius = 2.2.dp.toPx(), center = Offset(x, y))
+        }
+    }
+}
+
 /**
  * 迷你播放条：播放器滚出屏幕后接管控制。
- * 顶边一条 3dp 进度线不占高度，点整条回到顶部看大图。
+ * 顶边一条细进度条不占高度，点整行回到顶部看大图。
  */
 @Composable
 private fun MiniPlayer(
     title: String,
     positionMs: Long,
     durationMs: Long,
+    markers: List<Marker>,
     playing: Boolean,
     speed: Float,
     onTogglePlay: () -> Unit,
     onSpeed: () -> Unit,
+    onSeek: (Long) -> Unit,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val fraction = (positionMs.toFloat() / durationMs.coerceAtLeast(1)).coerceIn(0f, 1f)
     // 不要再加 navigationBarsPadding()：外层 Box 的 Scaffold padding 已经让出了导航栏高度，
     // 两处都加会让这条播放器向上飘出一个导航栏的距离，底下的点击区还变成死区
     Column(
@@ -1961,19 +2030,12 @@ private fun MiniPlayer(
             .background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onExpand),
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(3.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth(fraction)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.primary),
-            )
-        }
+        MiniProgressBar(
+            positionMs = positionMs,
+            durationMs = durationMs,
+            markers = markers,
+            onSeek = onSeek,
+        )
         Row(
             Modifier
                 .fillMaxWidth()

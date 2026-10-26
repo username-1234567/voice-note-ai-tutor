@@ -9,7 +9,7 @@
 ![platform](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)
 ![kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
-![release](https://img.shields.io/badge/release-v1.4.1-2ea44f)
+![release](https://img.shields.io/badge/release-v1.5.0-2ea44f)
 ![size](https://img.shields.io/badge/APK-6.7%20MB-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-3da639)
 
@@ -43,6 +43,7 @@ Recordings and photos stay on the device. Images are uploaded to your AI provide
 - Auto-pauses on incoming calls / audio focus loss and records the cut point
 - Warns once after 60s of silence (phone covered by a book, professor walked away)
 - Auto-names recordings from your timetable
+- Reminds you before class, with a lead time you set yourself (1–60 min)
 
 ### Markers
 
@@ -50,6 +51,11 @@ Recordings and photos stay on the device. Images are uploaded to your AI provide
 - Multiple photos per marker; review what you shot while still recording
 - Re-crop after class — the old explanation is invalidated and the marker returns to pending
 - "Needs review" star with a filtered view
+
+### Viewing images
+
+- Pinch to zoom up to 6× in full screen, drag with one finger once zoomed
+- Marker dots on the progress bar are colour-coded by AI status and jump on tap or drag
 
 ### AI explanations
 

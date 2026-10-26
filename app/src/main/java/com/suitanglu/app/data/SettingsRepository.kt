@@ -67,6 +67,9 @@ class SettingsRepository(private val context: Context) {
         val compressImages = booleanPreferencesKey("compress_images")
         val compressQuality = intPreferencesKey("compress_quality")
         val sizeLimitMb = intPreferencesKey("size_limit_mb")
+        val onboarded = booleanPreferencesKey("onboarded")
+        val reminderEnabled = booleanPreferencesKey("reminder_enabled")
+        val reminderLead = intPreferencesKey("reminder_lead_min")
         val firstDeleteTipShown = booleanPreferencesKey("first_delete_tip_shown")
         fun slot(day: Int, slot: Int) = stringPreferencesKey("course_${day}_$slot")
         fun slotStart(day: Int, slot: Int) = intPreferencesKey("slot_${day}_${slot}_start")
@@ -136,6 +139,31 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun courseNameNow(day: Int, slot: Int): String =
         courseName(day, slot).first()
+
+    /** 所有已配置的课程名（去重、去空），供重命名时反查归属用 */
+    suspend fun allCourseNamesNow(): List<String> =
+        allCourseNames().first().values.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+    /** 是否走完新手引导 */
+    suspend fun isOnboarded(): Boolean = context.dataStore.data.first()[K.onboarded] ?: false
+
+    suspend fun setOnboarded() {
+        context.dataStore.edit { it[K.onboarded] = true }
+    }
+
+    /** 上课提醒：开关 + 提前分钟数 */
+    val reminderConfig: Flow<Pair<Boolean, Int>> = context.dataStore.data.map { p ->
+        (p[K.reminderEnabled] ?: false) to (p[K.reminderLead] ?: 10)
+    }
+
+    suspend fun reminderConfigNow(): Pair<Boolean, Int> = reminderConfig.first()
+
+    suspend fun setReminder(enabled: Boolean, leadMinutes: Int) {
+        context.dataStore.edit {
+            it[K.reminderEnabled] = enabled
+            it[K.reminderLead] = leadMinutes.coerceIn(1, 60)
+        }
+    }
 
     fun allCourseNames(): Flow<Map<Pair<Int, Int>, String>> =
         context.dataStore.data.map { p ->
