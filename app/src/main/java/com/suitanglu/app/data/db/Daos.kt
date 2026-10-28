@@ -102,6 +102,10 @@ interface MarkerDao {
     @Query("UPDATE markers SET mergedInto = NULL WHERE id = :id")
     suspend fun clearMerged(id: Long)
 
+    /** 合并后记录时间段终点：组首标记在播放条上画成 [offsetMs, endOffsetMs] 的区间 */
+    @Query("UPDATE markers SET mergedEndOffsetMs = :endOffsetMs, updatedAt = :now WHERE id = :id")
+    suspend fun setMergedEnd(id: Long, endOffsetMs: Long, now: Long)
+
     /**
      * 原子翻转星标。
      * 用"读当前值再取反"的写法时，连点两下会两次都读到旧值，第二次等于没点。
@@ -135,7 +139,9 @@ interface MarkerDao {
 
 @Dao
 interface MarkerImageDao {
-    @Query("SELECT * FROM marker_images WHERE markerId = :markerId ORDER BY orderIndex ASC")
+    // 按拍摄时间排序而不是 orderIndex：合并时图片从多个标记挪过来，orderIndex 会重复，
+    // 按 createdAt 才能让合并后的图片按"什么时候拍的"自然排列
+    @Query("SELECT * FROM marker_images WHERE markerId = :markerId ORDER BY createdAt ASC")
     suspend fun getByMarker(markerId: Long): List<MarkerImage>
 
     @Query("SELECT * FROM marker_images")
@@ -149,6 +155,10 @@ interface MarkerImageDao {
 
     @Query("DELETE FROM marker_images WHERE markerId = :markerId")
     suspend fun deleteByMarker(markerId: Long)
+
+    /** 把一批图片整体挪到另一个标记下（合并时用）。SQLite 的 UPDATE 不支持 ORDER BY，顺序在读取端处理 */
+    @Query("UPDATE marker_images SET markerId = :targetId WHERE markerId = :sourceId")
+    suspend fun reassignTo(sourceId: Long, targetId: Long)
 }
 
 @Dao

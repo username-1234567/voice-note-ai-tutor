@@ -47,6 +47,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -135,6 +136,8 @@ fun RecordingScreen(
     // saveable：系统在相机/裁剪期间重建 Activity 时，弹层与未保存文字不丢
     var showMarkerSheet by rememberSaveable { mutableStateOf(false) }
     var markerText by rememberSaveable { mutableStateOf("") }
+    var showTextOnlySheet by rememberSaveable { mutableStateOf(false) }
+    var textOnlyText by rememberSaveable { mutableStateOf("") }
     var showStopConfirm by remember { mutableStateOf(false) }
     var croppingSource by rememberSaveable { mutableStateOf<Uri?>(null) }
     // 这次拍照是不是"长按快拍"：是则跳过裁剪，直接入库
@@ -534,6 +537,21 @@ fun RecordingScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             )
             Spacer(Modifier.height(10.dp))
+            // 秒表式「只标记」：不拍照，就记一个时间点。
+            // 老师口头强调的重点、想回头再听一遍的地方，用这个比举手机拍一张更轻。
+            OutlinedButton(
+                onClick = { showTextOnlySheet = true },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Bookmark,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("只标记，不拍照", style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(Modifier.height(10.dp))
         }
     }
 
@@ -553,6 +571,43 @@ fun RecordingScreen(
             },
             onDismissRequest = { showStopConfirm = false },
         )
+    }
+
+    // 秒表式「只标记」弹层：一个时间点 + 可选文字，不拍照
+    if (showTextOnlySheet) {
+        ModalBottomSheet(onDismissRequest = { showTextOnlySheet = false }) {
+            Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
+                Text("只标记，不拍照", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 4.dp))
+                Text(
+                    "在当前时间记一个标记点。适合老师口头强调的重点、想回头再听一遍的地方。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 14.dp),
+                )
+                OutlinedTextField(
+                    value = textOnlyText,
+                    onValueChange = { textOnlyText = it },
+                    label = { Text("文字备注（可选）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        vm.saveTextOnlyMarker(textOnlyText) { ok ->
+                            if (ok) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                textOnlyText = ""
+                                showTextOnlySheet = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                ) {
+                    Text("标记当前时间")
+                }
+            }
+        }
     }
 
     // 标记编辑底部弹层

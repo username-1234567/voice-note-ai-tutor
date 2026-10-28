@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatSession::class,
         DirectMessage::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -135,6 +135,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 → v6：合并后的标记需要记录时间段终点，用于在播放条上画成区间而非一个点 */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `mergedEndOffsetMs` INTEGER")
+            }
+        }
+
         /**
          * 全部迁移，按顺序。
          *
@@ -143,7 +150,7 @@ abstract class AppDatabase : RoomDatabase() {
          * "A migration from 2 to 3 was required but not found"，用户看到的就是"导入失败"。
          */
         val ALL_MIGRATIONS: Array<Migration> =
-            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(

@@ -338,7 +338,8 @@ class AiSendManager(
         if (!busy.compareAndSet(false, true)) return false
         _activeRecordingId.value = db.markerDao().getById(markerIds.first())?.recordingId
         try {
-            val members = markerIds.mapNotNull { db.markerDao().getById(it) }
+            // 按 offsetMs 排序：最早那张所属的标记作为组首，最晚那张的 offsetMs 是时间段终点
+            val members = markerIds.mapNotNull { db.markerDao().getById(it) }.sortedBy { it.offsetMs }
             if (members.size < 2) return false
             val head = members.first()
             val images = members
@@ -421,9 +422,20 @@ class AiSendManager(
                     ),
                 )
                 db.markerDao().updateAi(head.id, Marker.AI_SUCCESS, answer, null, t)
+                // 真正合并成一个：把成员的图片挪到组首标记下，成员记 mergedInto 指过来（列表里隐藏）。
+                // members 已按 offsetMs 排序，head 是"最早那张"、last 是"最晚那张"，
+                // 播放条据此画成 [head.offsetMs, last.offsetMs] 的区间，而不是几个散点。
+                val headOffset = head.offsetMs
+                val endOffset = members.last().offsetMs
                 members.drop(1).forEach { m ->
+                    db.markerImageDao().reassignTo(m.id, head.id)
                     db.markerDao().mergeInto(m.id, head.id, Marker.AI_SUCCESS, t)
                 }
+                db.markerDao().setMergedEnd(
+                    head.id,
+                    if (endOffset > headOffset) endOffset else headOffset,
+                    t,
+                )
                 return true
             } catch (e: CancellationException) {
                 _streaming.value = null

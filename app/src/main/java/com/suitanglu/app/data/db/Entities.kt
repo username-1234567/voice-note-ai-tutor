@@ -67,6 +67,14 @@ data class Marker(
      * 比每张各发一次既省钱又能让 AI 看到上下文。非空表示这条自己不再单独发。
      */
     val mergedInto: Long? = null,
+
+    /**
+     * 合并后这一条标记在播放条上画成的时间段终点（毫秒，相对于录音开始）。
+     *
+     * 合并几张图时，组首标记的 offsetMs 是"最早那张图的拍摄时刻"，这里存"最晚那张图的拍摄时刻"，
+     * 两者之间就是这条合并标记覆盖的时间段。非合并的单条标记此值为 null，播放条画成一个点。
+     */
+    val mergedEndOffsetMs: Long? = null,
 ) {
     companion object {
         const val AI_PENDING = "pending"

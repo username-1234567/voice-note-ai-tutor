@@ -215,7 +215,9 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
     var expandedMarkerId by remember { mutableStateOf<Long?>(null) }
     // 只看待复习：被筛掉的标记仍然留在进度条上，只是不在列表里
     var onlyReview by rememberSaveable { mutableStateOf(false) }
-    val visibleMarkers = if (onlyReview) markers.filter { it.needsReview } else markers
+    // 合并后的成员标记彻底隐藏：图片已挪到组首，组首展示全部；成员只留 mergedInto 指针不显示
+    val visibleMarkers = (if (onlyReview) markers.filter { it.needsReview } else markers)
+        .filter { it.mergedInto == null }
     // 合并发送：选中的多个标记共用一次请求、一条讲解
     var mergeMode by remember { mutableStateOf(false) }
     val mergeSel = remember { androidx.compose.runtime.mutableStateListOf<Long>() }
@@ -1181,9 +1183,14 @@ fun MarkerProgressBar(
     )
 
     // 相邻标记按比例 2% 聚合成簇，密集时不再糊成一串
-    val clusters = remember(markers, totalMs) {
+    // 合并后的成员标记不再单独画点：它们已经并入组首的时间段里。
+    // 组首标记带 mergedEndOffsetMs，单独画成一段区间；其余普通标记照旧聚成簇。
+    val standalone = remember(markers) { markers.filter { it.mergedInto == null } }
+    val mergedRanges = remember(standalone) { standalone.filter { it.mergedEndOffsetMs != null } }
+    val plainMarkers = remember(standalone) { standalone.filter { it.mergedEndOffsetMs == null } }
+    val clusters = remember(plainMarkers, totalMs) {
         val result = mutableListOf<MutableList<Marker>>()
-        for (m in markers.sortedBy { it.offsetMs }) {
+        for (m in plainMarkers.sortedBy { it.offsetMs }) {
             val last = result.lastOrNull()
             if (last != null && (m.offsetMs - last.first().offsetMs).toFloat() / totalMs < 0.02f) {
                 last.add(m)
@@ -1236,6 +1243,17 @@ fun MarkerProgressBar(
                                 kotlin.math.abs(it.offsetMs.toFloat() / totalMs - fraction)
                             }!!,
                         )
+                        return@detectTapGestures
+                    }
+                    // 合并时间段：点击落在 [offsetMs, mergedEndOffsetMs] 区间内就命中
+                    val mergedHit = mergedRanges.firstOrNull { m ->
+                        val end = m.mergedEndOffsetMs ?: m.offsetMs
+                        val startFrac = (m.offsetMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                        val endFrac = (end.toFloat() / totalMs).coerceIn(startFrac, 1f)
+                        fraction in startFrac..endFrac
+                    }
+                    if (mergedHit != null) {
+                        onMarkerClick(mergedHit)
                         return@detectTapGestures
                     }
                     val pauseEvent = pauseEvents.firstOrNull {
@@ -1302,6 +1320,38 @@ fun MarkerProgressBar(
             }
         }
         // 标记簇（圆形 + 描边；多标记时加计数角标）
+        // 合并标记：画成一段横跨 [offsetMs, mergedEndOffsetMs] 的区间，
+        // 起止两端各一个实心点，中间是半透明填充，区别于普通单点标记
+        mergedRanges.forEach { m ->
+            val end = m.mergedEndOffsetMs ?: m.offsetMs
+            val startFrac = (m.offsetMs.toFloat() / totalMs).coerceIn(0f, 1f)
+            val endFrac = (end.toFloat() / totalMs).coerceIn(startFrac, 1f)
+            val x0 = size.width * startFrac
+            val x1 = size.width * endFrac
+            val color = when {
+                m.aiStatus == Marker.AI_FAILED -> failedColor
+                m.aiStatus == Marker.AI_SUCCESS -> successColor
+                else -> pendingColor
+            }
+            // 区间填充：一条加粗的半透明横条
+            if (x1 - x0 > barHeight) {
+                drawRoundRect(
+                    color = color.copy(alpha = 0.28f),
+                    topLeft = Offset(x0, y - barHeight * 0.8f),
+                    size = androidx.compose.ui.geometry.Size(x1 - x0, barHeight * 1.6f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(barHeight * 0.8f),
+                )
+            }
+            // 起止两个端点
+            drawCircle(color = trackColor, radius = barHeight * 1.05f + borderStroke, center = Offset(x0, y))
+            drawCircle(color = color, radius = barHeight * 1.05f, center = Offset(x0, y))
+            drawCircle(color = Color.White, radius = barHeight * 0.45f, center = Offset(x0, y))
+            if (x1 - x0 > barHeight * 3) {
+                drawCircle(color = trackColor, radius = barHeight * 1.05f + borderStroke, center = Offset(x1, y))
+                drawCircle(color = color, radius = barHeight * 1.05f, center = Offset(x1, y))
+                drawCircle(color = Color.White, radius = barHeight * 0.45f, center = Offset(x1, y))
+            }
+        }
         clusters.forEach { c ->
             val cxFraction = (c.sumOf { it.offsetMs }.toFloat() / c.size) / totalMs
             val x = size.width * cxFraction.coerceIn(0f, 1f)
@@ -2010,7 +2060,30 @@ private fun MiniProgressBar(
             size = Size(size.width * fraction, lineH),
             cornerRadius = CornerRadius(lineH / 2),
         )
-        markers.forEach { m ->
+        // 合并成员不画点（已并入组首）；合并组首画成一段小横条
+        val standalone = markers.filter { it.mergedInto == null }
+        standalone.filter { it.mergedEndOffsetMs != null }.forEach { m ->
+            val end = m.mergedEndOffsetMs ?: m.offsetMs
+            val startFrac = (m.offsetMs.toFloat() / total).coerceIn(0f, 1f)
+            val endFrac = (end.toFloat() / total).coerceIn(startFrac, 1f)
+            val x0 = size.width * startFrac
+            val x1 = size.width * endFrac
+            val c = when (m.aiStatus) {
+                Marker.AI_SUCCESS -> extra.success
+                Marker.AI_FAILED -> failColor
+                else -> extra.pending
+            }
+            if (x1 - x0 > 1.dp.toPx()) {
+                drawRoundRect(
+                    color = c.copy(alpha = 0.35f),
+                    topLeft = Offset(x0, y - lineH),
+                    size = Size(x1 - x0, lineH * 2),
+                    cornerRadius = CornerRadius(lineH),
+                )
+            }
+            drawCircle(color = c, radius = 2.2.dp.toPx(), center = Offset(x0, y))
+        }
+        standalone.filter { it.mergedEndOffsetMs == null }.forEach { m ->
             val x = (m.offsetMs.toFloat() / total).coerceIn(0f, 1f) * size.width
             val c = when (m.aiStatus) {
                 Marker.AI_SUCCESS -> extra.success

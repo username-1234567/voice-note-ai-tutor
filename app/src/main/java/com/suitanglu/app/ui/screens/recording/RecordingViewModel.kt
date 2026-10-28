@@ -116,6 +116,21 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 秒表式「只标记」：不拍照、不裁剪，就记一个时间点（可带文字）。
+     *
+     * 想"这地方回头要再看一眼"但没东西可拍（比如老师口头强调的重点）时用。
+     * 图片列表传空，saveMarker 本身支持无图标记，这里只是补上入口。
+     */
+    fun saveTextOnlyMarker(text: String, onDone: (Boolean) -> Unit) {
+        val state = RecordingBus.state.value
+        if (state == null) {
+            onDone(false)
+            return
+        }
+        persistMarker(state.recordingId, state.elapsedMs, emptyList(), text, clearPending = false, onDone)
+    }
+
+    /**
      * 长按快拍：拍完直接入库，不裁剪、不写字。
      *
      * 刻意只保存自己这一张，不走 pendingImages——那条路会把"上次拍完没保存就关掉面板"的图
