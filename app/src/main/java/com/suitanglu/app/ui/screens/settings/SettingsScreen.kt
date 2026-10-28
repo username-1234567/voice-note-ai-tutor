@@ -8,7 +8,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
+import com.suitanglu.app.R
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -70,6 +78,7 @@ fun SettingsScreen(
     val vm: SettingsViewModel = viewModel()
     val general by vm.generalConfig.collectAsState()
     val reminder by vm.reminderConfig.collectAsState()
+    val appIcon by vm.appIcon.collectAsState()
     val ai by vm.aiConfig.collectAsState()
     val updateState by vm.updateState.collectAsState()
 
@@ -138,6 +147,44 @@ fun SettingsScreen(
                     tint = MaterialTheme.colorScheme.primary,
                     onClick = onOpenRender,
                 )
+            }
+
+            SettingsSection("应用图标") {
+                Text(
+                    "换个桌面图标。换完回桌面看一下，有些系统要几秒才刷新。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    com.suitanglu.app.util.AppIconManager.ALL.forEach { alias ->
+                        val selected = appIcon == alias
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable { vm.saveAppIcon(alias) },
+                        ) {
+                            Image(
+                                painter = painterResource(iconResOf(alias)),
+                                contentDescription = com.suitanglu.app.util.AppIconManager.labelOf(alias),
+                                modifier = Modifier
+                                    .size(58.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .border(
+                                        width = if (selected) 2.dp else 1.dp,
+                                        color = if (selected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.outlineVariant,
+                                        shape = RoundedCornerShape(16.dp),
+                                    ),
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                com.suitanglu.app.util.AppIconManager.labelOf(alias),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
 
             SettingsSection("上课提醒") {
@@ -284,4 +331,12 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/** alias → mipmap 资源。设置页的预览直接用 adaptive icon 本身，不另做缩略图。 */
+private fun iconResOf(alias: String): Int = when (alias) {
+    com.suitanglu.app.util.AppIconManager.TEAL -> R.mipmap.ic_launcher_teal
+    com.suitanglu.app.util.AppIconManager.CLAY -> R.mipmap.ic_launcher_clay
+    com.suitanglu.app.util.AppIconManager.INK -> R.mipmap.ic_launcher_ink
+    else -> R.mipmap.ic_launcher
 }

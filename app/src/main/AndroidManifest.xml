@@ -27,12 +27,56 @@
             android:name=".ui.MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- 图标切换：每个 alias 指向同一个 Activity，只是带的 icon 不同。
+             运行时用 PackageManager 只启用其中一个，其余禁用。
+             首个默认 enabled="true"，否则全新安装后桌面上没有图标。 -->
+        <activity-alias
+            android:name=".iconIndigo"
+            android:targetActivity=".ui.MainActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:enabled="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <activity-alias
+            android:name=".iconTeal"
+            android:targetActivity=".ui.MainActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_teal"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".iconClay"
+            android:targetActivity=".ui.MainActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_clay"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".iconInk"
+            android:targetActivity=".ui.MainActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_ink"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
 
         <receiver android:name=".reminder.ReminderReceiver" android:exported="false" />
         <receiver android:name=".reminder.BootReceiver" android:exported="false">

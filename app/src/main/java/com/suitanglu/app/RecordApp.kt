@@ -45,6 +45,15 @@ class RecordApp : Application() {
         super.onCreate()
         container = AppGraph.init(this)
         recoverUnfinishedRecordings()
+        // 图标切换是"启用/禁用组件"，某些系统更新或清数据后会回到 manifest 默认值，
+        // 启动时按用户设置再对齐一次
+        container.appScope.launch {
+            runCatching {
+                com.suitanglu.app.util.AppIconManager.apply(
+                    this@RecordApp, container.settings.appIconNow(),
+                )
+            }
+        }
         // 开机/启动时重排上课提醒：闹钟在重启后会清空
         container.appScope.launch {
             runCatching { com.suitanglu.app.reminder.ReminderScheduler.reschedule(this@RecordApp, container.settings) }

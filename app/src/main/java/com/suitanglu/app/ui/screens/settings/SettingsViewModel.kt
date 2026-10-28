@@ -22,6 +22,16 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val container = AppGraph.get(app)
 
+    val appIcon: StateFlow<String> = container.settings.appIcon
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.suitanglu.app.util.AppIconManager.INDIGO)
+
+    fun saveAppIcon(alias: String) {
+        viewModelScope.launch {
+            container.settings.setAppIcon(alias)
+            com.suitanglu.app.util.AppIconManager.apply(getApplication(), alias)
+        }
+    }
+
     val reminderConfig: StateFlow<Pair<Boolean, Int>> = container.settings.reminderConfig
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false to 10)
 

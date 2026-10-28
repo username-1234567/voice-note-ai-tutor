@@ -70,6 +70,7 @@ class SettingsRepository(private val context: Context) {
         val onboarded = booleanPreferencesKey("onboarded")
         val reminderEnabled = booleanPreferencesKey("reminder_enabled")
         val reminderLead = intPreferencesKey("reminder_lead_min")
+        val appIcon = stringPreferencesKey("app_icon")
         val firstDeleteTipShown = booleanPreferencesKey("first_delete_tip_shown")
         fun slot(day: Int, slot: Int) = stringPreferencesKey("course_${day}_$slot")
         fun slotStart(day: Int, slot: Int) = intPreferencesKey("slot_${day}_${slot}_start")
@@ -157,6 +158,17 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun reminderConfigNow(): Pair<Boolean, Int> = reminderConfig.first()
+
+    /** 当前启动图标的 alias 名 */
+    val appIcon: Flow<String> = context.dataStore.data.map { p ->
+        p[K.appIcon] ?: com.suitanglu.app.util.AppIconManager.INDIGO
+    }
+
+    suspend fun appIconNow(): String = appIcon.first()
+
+    suspend fun setAppIcon(alias: String) {
+        context.dataStore.edit { it[K.appIcon] = alias }
+    }
 
     suspend fun setReminder(enabled: Boolean, leadMinutes: Int) {
         context.dataStore.edit {
