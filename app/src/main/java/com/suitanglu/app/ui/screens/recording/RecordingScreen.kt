@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -479,6 +480,21 @@ fun RecordingScreen(
             }
 
             Spacer(Modifier.height(20.dp))
+            // 秒表式「只标记」：不拍照，就记一个时间点。
+            // 老师口头强调的重点、想回头再听一遍的地方，用这个比举手机拍一张更轻。
+            OutlinedButton(
+                onClick = { showTextOnlySheet = true },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Bookmark,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("只标记，不拍照", style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(Modifier.height(10.dp))
             // 自绘按钮而不是 Button：Material3 的 Button 只暴露 onClick，挂不下长按。
             // 短按 = 打开标记面板（可裁剪、可写字）；长按 = 直接进相机，拍完就入库。
             Box(
@@ -537,21 +553,6 @@ fun RecordingScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             )
             Spacer(Modifier.height(10.dp))
-            // 秒表式「只标记」：不拍照，就记一个时间点。
-            // 老师口头强调的重点、想回头再听一遍的地方，用这个比举手机拍一张更轻。
-            OutlinedButton(
-                onClick = { showTextOnlySheet = true },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-            ) {
-                Icon(
-                    Icons.Filled.Bookmark,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text("只标记，不拍照", style = MaterialTheme.typography.labelLarge)
-            }
-            Spacer(Modifier.height(10.dp))
         }
     }
 
@@ -559,7 +560,7 @@ fun RecordingScreen(
     if (showStopConfirm) {
         AppAlertDialog(
             title = "停止录音",
-            message = "录音会先存下来，标记图片留给你课后修整，确认无误后到回放页点「发送全部」，再交给 AI 讲解。录音结束后无法继续录这一段。",
+            message = "录音会先保存。结束后到回放页点「发送全部」交给 AI 讲解，且无法继续录这一段。",
             confirmLabel = "停止录音",
             dismissLabel = "继续录",
             destructive = true,
@@ -579,7 +580,7 @@ fun RecordingScreen(
             Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
                 Text("只标记，不拍照", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 4.dp))
                 Text(
-                    "在当前时间记一个标记点。适合老师口头强调的重点、想回头再听一遍的地方。",
+                    "记下当前时间点，可带备注。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 14.dp),
@@ -617,14 +618,20 @@ fun RecordingScreen(
             markerText = "" // 未保存的文字备注不带入下一个标记
             vm.discardPending() // 没保存的图片也一并丢掉
         }) {
-            Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 16.dp).verticalScroll(rememberScrollState())) {
+            Column(
+                Modifier
+                    .padding(start = 20.dp, end = 20.dp, bottom = 16.dp)
+                    // 键盘弹出时整体上推，否则保存按钮会被推到屏幕外，得先上滑才看得见
+                    .imePadding()
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 Text(
                     "添加标记",
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
                 Text(
-                    "拍下这一页，保存后会立刻加入 AI 讲解队列（录音结束后统一发送）。",
+                    "保存后加入讲解队列，录音结束后统一发送。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 14.dp),
@@ -663,7 +670,7 @@ fun RecordingScreen(
                 if (pending.isNotEmpty()) {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(3),
-                        modifier = Modifier.height(if (pending.size > 3) 240.dp else 120.dp),
+                        modifier = Modifier.height(if (pending.size > 3) 168.dp else 112.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
@@ -711,7 +718,7 @@ fun RecordingScreen(
                 }
                 Spacer(Modifier.height(24.dp))
                 Text(
-                    "提示：若系统相机导致录音中断，可在设置中切换为应用内相机。",
+                    "系统相机中断录音时，可在设置里改用应用内相机。",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

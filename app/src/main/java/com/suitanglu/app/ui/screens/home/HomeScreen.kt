@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.MusicOff
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
@@ -267,6 +269,12 @@ fun HomeScreen(
                     count = selectedIds.size,
                     onExit = { exitSelection() },
                     onSelectAll = { selectedIds = allRecordingIds },
+                    onDeleteAudioOnly = {
+                        vm.deleteAudioOnlyMany(selectedIds)
+                        val n = selectedIds.size
+                        exitSelection()
+                        scope.launch { snackbar.showSnackbar("已删除 $n 条录音的音频，标记与讲解保留") }
+                    },
                     onDelete = {
                         vm.deleteToRecycleMany(selectedIds)
                         val n = selectedIds.size
@@ -675,6 +683,7 @@ private fun SelectionHeader(
     count: Int,
     onExit: () -> Unit,
     onSelectAll: () -> Unit,
+    onDeleteAudioOnly: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Row(
@@ -692,7 +701,25 @@ private fun SelectionHeader(
             modifier = Modifier.weight(1f),
         )
         TextButton(onClick = onSelectAll) { Text("全选") }
-        TextButton(onClick = onDelete, enabled = count > 0) { Text("移入回收站") }
+        // 两个删除动作都配图标：原来纯文字，多选时看不出哪个是"只删音频"
+        TextButton(onClick = onDeleteAudioOnly, enabled = count > 0) {
+            Icon(
+                Icons.Filled.MusicOff,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text("仅删音频")
+        }
+        TextButton(onClick = onDelete, enabled = count > 0) {
+            Icon(
+                Icons.Filled.DeleteOutline,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text("回收站")
+        }
     }
 }
 

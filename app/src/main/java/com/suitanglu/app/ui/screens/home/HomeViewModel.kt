@@ -155,6 +155,13 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { ids.forEach { repo.deleteToRecycle(it) } }
     }
 
+    /** 多选时批量仅删音频：保留标记、图片与 AI 回复 */
+    fun deleteAudioOnlyMany(ids: Collection<Long>) {
+        viewModelScope.launch {
+            ids.forEach { runCatching { repo.deleteAudioOnly(it) } }
+        }
+    }
+
     fun deleteAudioOnly(id: Long) {
         viewModelScope.launch { repo.deleteAudioOnly(id) }
     }

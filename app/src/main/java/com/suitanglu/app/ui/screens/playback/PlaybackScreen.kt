@@ -657,7 +657,9 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         )
                     }
                     val reviewCount = markers.count { it.needsReview }
-                    if (reviewCount > 0) {
+                    // 已经在筛选态时必须保留这个 chip：取消最后一个星标后 reviewCount 归零，
+                    // 若此时把 chip 一起藏了，用户就卡在空列表里退不出来
+                    if (reviewCount > 0 || onlyReview) {
                         FilterChip(
                             selected = onlyReview,
                             onClick = { onlyReview = !onlyReview },
