@@ -80,7 +80,7 @@ Recordings and photos stay on the device. Images are uploaded to your AI provide
 
 ### Install
 
-Grab `record-v1.5.1.apk` from [Releases](https://github.com/username-1234567/voice-note-ai-tutor/releases).
+Grab `app-release.apk` from [Releases](https://github.com/username-1234567/voice-note-ai-tutor/releases).
 
 > Requires Android 10+. You must add an API key in Settings → AI before photos get explanations.
 

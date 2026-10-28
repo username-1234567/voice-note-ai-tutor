@@ -80,7 +80,7 @@
 
 ### 方式一：直接安装
 
-到 [Releases](https://github.com/username-1234567/voice-note-ai-tutor/releases) 下载最新的 `record-v1.5.1.apk`。
+到 [Releases](https://github.com/username-1234567/voice-note-ai-tutor/releases) 下载最新的 `app-release.apk`。
 
 > 需要 Android 10 及以上。安装后要先在「设置 → AI 配置」填一个 API Key，否则拍照后没有讲解。
 
