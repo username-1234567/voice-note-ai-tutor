@@ -152,9 +152,11 @@ private val LightExtra = RecordColors(
     onPendingContainer = Color(0xFF271A00),
     // 浅色轨道上实测：原 #E08A00 只有 2.24:1，降到 #C2410C 后 4.30:1（非文本图形需 ≥3:1）
     pauseMark = Color(0xFFC2410C),
+    // 首位用绿而不是主色靛蓝：这套色板的功能是"区分不同科目"，
+    // 和主色同调会让第一门课看起来像被"强调"，而不是被"分类"
     coursePalette = listOf(
-        Color(0xFF3B5BA5),
-        Color(0xFF16695A),
+        Color(0xFF246B5A),
+        Color(0xFF3B6FA0),
         Color(0xFF7A57B8),
         Color(0xFFC97A38),
         Color(0xFFB0507F),
@@ -173,8 +175,8 @@ private val DarkExtra = RecordColors(
     onPendingContainer = Color(0xFFFBDFAE),
     pauseMark = Color(0xFFFFB74D),
     coursePalette = listOf(
-        Color(0xFFAEC0F5),
-        Color(0xFF6FCFBC),
+        Color(0xFF6FD3B6),
+        Color(0xFF7FAEDA),
         Color(0xFFB49AE8),
         Color(0xFFE9A87A),
         Color(0xFFE38BB2),

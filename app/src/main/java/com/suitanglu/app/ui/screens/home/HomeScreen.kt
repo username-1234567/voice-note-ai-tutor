@@ -937,7 +937,13 @@ private fun TimelineRow(
                         leadingIcon = { Icon(Icons.Filled.Delete, null) },
                         onClick = onDelete,
                     )
-                    DropdownMenuItem(text = { Text("仅删除录音文件") }, onClick = onDeleteAudioOnly)
+                    DropdownMenuItem(
+                        text = { Text("仅删除录音文件") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.MusicOff, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
+                        onClick = onDeleteAudioOnly,
+                    )
                     DropdownMenuItem(
                         text = { Text("导出单条录音") },
                         leadingIcon = { Icon(Icons.Filled.IosShare, null) },
