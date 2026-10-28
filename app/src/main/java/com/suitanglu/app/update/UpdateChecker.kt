@@ -19,7 +19,35 @@ import java.util.concurrent.TimeUnit
 object UpdateConfig {
     const val OWNER = "username-1234567"
     const val REPO = "voice-note-ai-tutor"
-    const val CURRENT_VERSION = "1.5.0"
+
+    @Volatile
+    private var installedVersion: String? = null
+
+    /**
+     * 当前安装版本，运行期从 PackageManager 读取。
+     *
+     * 原来这里是硬编码的 `const val "1.5.0"`，和 build.gradle.kts 的 versionName
+     * 是两处独立维护的：发版时改了 gradle 忘了改这里，App 会一直认为自己是旧版，
+     * 于是每次启动都提示"有新版本"，而装完仍然是同一个版本——典型的活锁。
+     * 读系统里真实的 versionName 就不存在不同步的可能。
+     *
+     * 读不到时退回 "0.0.0"：宁可多提示一次更新，也不要因为版本号缺失而永不提示。
+     */
+    val CURRENT_VERSION: String get() = installedVersion ?: "0.0.0"
+
+    fun readInstalledVersion(context: Context): String = runCatching {
+        val pm = context.packageManager
+        val info = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            pm.getPackageInfo(
+                context.packageName,
+                android.content.pm.PackageManager.PackageInfoFlags.of(0),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(context.packageName, 0)
+        }
+        info.versionName
+    }.getOrNull()?.takeIf { it.isNotBlank() }?.also { installedVersion = it } ?: CURRENT_VERSION
 }
 
 data class UpdateInfo(
@@ -58,7 +86,13 @@ class UpdateChecker(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .build()
+
+    init {
+        // 构造时读一次真实版本号，之后所有比较都基于它
+        UpdateConfig.readInstalledVersion(context)
+    }
 
     private fun downloadClient(): OkHttpClient = client.newBuilder()
         .readTimeout(5, TimeUnit.MINUTES)
@@ -71,9 +105,16 @@ class UpdateChecker(private val context: Context) {
                 .header("Accept", "application/vnd.github+json")
                 .get()
                 .build()
-            downloadClient().newCall(request).execute().use { resp ->
+            // 用普通 client 而不是 downloadClient：查询只是几百字节的 JSON，
+            // 借用 5 分钟读超时的下载客户端，网络差时会卡到用户以为"点了没反应"
+            client.newCall(request).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
-                if (resp.code == 404) return@use UpdateCheckResult.UpToDate(UpdateConfig.CURRENT_VERSION)
+                if (resp.code == 404) {
+                    // 404 有两种可能：仓库不存在/已改名，或还没有任何 Release。
+                    // 原来一律当成"已是最新"，等于把配置错误彻底藏起来——
+                    // 仓库改名后不会有任何迹象，检查静默失效也无人察觉。
+                    return@use UpdateCheckResult.Error("未找到 Release（HTTP 404），请到 GitHub 确认仓库状态")
+                }
                 if (!resp.isSuccessful) {
                     return@use UpdateCheckResult.Error("查询失败 HTTP ${resp.code}: ${body.take(200)}")
                 }
@@ -126,18 +167,28 @@ class UpdateChecker(private val context: Context) {
                 val total = body.contentLength()
                 var read = 0L
                 target.outputStream().buffered().use { out ->
+                    val stream = body.byteStream()
                     val buf = ByteArray(64 * 1024)
                     while (true) {
-                        val n = body.byteStream().read(buf)
+                        val n = stream.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n)
                         read += n
                         if (total > 0) onProgress((read * 100 / total).toInt())
                     }
                 }
+                // 只认 isSuccessful 是不够的：连接中途断开时 OkHttp 可能已经返回了
+                // 200 和部分字节，交给安装器只会得到一句"解析包时出现问题"，
+                // 用户完全看不出是下载残缺。这里按声明的长度核对。
+                if (read == 0L) throw IllegalStateException("下载内容为空")
+                if (total > 0 && read != total) {
+                    throw IllegalStateException("下载不完整（$read/$total 字节），请重试")
+                }
             }
             Result.success(target)
         } catch (e: Exception) {
+            // 失败就清掉半成品，避免残留文件被下次误当成"已下载"
+            runCatching { File(context.filesDir, "updates/${info.apkName}").takeIf { it.exists() }?.delete() }
             Result.failure(e)
         }
     }

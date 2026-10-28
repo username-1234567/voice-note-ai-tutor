@@ -71,6 +71,7 @@ class SettingsRepository(private val context: Context) {
         val reminderEnabled = booleanPreferencesKey("reminder_enabled")
         val reminderLead = intPreferencesKey("reminder_lead_min")
         val appIcon = stringPreferencesKey("app_icon")
+        val dismissedUpdate = stringPreferencesKey("dismissed_update_version")
         val firstDeleteTipShown = booleanPreferencesKey("first_delete_tip_shown")
         fun slot(day: Int, slot: Int) = stringPreferencesKey("course_${day}_$slot")
         fun slotStart(day: Int, slot: Int) = intPreferencesKey("slot_${day}_${slot}_start")
@@ -168,6 +169,22 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setAppIcon(alias: String) {
         context.dataStore.edit { it[K.appIcon] = alias }
+    }
+
+    /**
+     * 用户点过"稍后"的版本号。
+     *
+     * 只记一个版本而不是布尔值：下一个版本发布时应该重新提醒一次，
+     * 用布尔开关的话用户点一次"稍后"就永久收不到任何更新提示了。
+     */
+    val dismissedUpdateVersion: Flow<String> = context.dataStore.data.map { p ->
+        p[K.dismissedUpdate].orEmpty()
+    }
+
+    suspend fun dismissedUpdateVersionNow(): String = dismissedUpdateVersion.first()
+
+    suspend fun dismissUpdateVersion(version: String) {
+        context.dataStore.edit { it[K.dismissedUpdate] = version }
     }
 
     suspend fun setReminder(enabled: Boolean, leadMinutes: Int) {

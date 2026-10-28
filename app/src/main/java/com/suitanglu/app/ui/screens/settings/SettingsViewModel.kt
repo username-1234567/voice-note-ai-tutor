@@ -200,17 +200,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun installUpdate(file: File) {
         val ctx = getApplication<Application>()
-        try {
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                ctx, "${ctx.packageName}.fileprovider", file,
-            )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            ctx.startActivity(intent)
-        } catch (e: Exception) {
-            _updateState.value = UpdateUiState.Error("无法安装：${e.message}")
+        // 统一走 UpdateInstaller：它会在缺「安装未知应用」权限时跳授权页，
+        // 而不是像原来那样直接 startActivity —— 那种情况下系统会静默拦下，
+        // 用户看到的就是"点了没反应"
+        when (val result = com.suitanglu.app.update.UpdateInstaller.install(ctx, file)) {
+            is com.suitanglu.app.update.InstallResult.Started -> Unit
+            is com.suitanglu.app.update.InstallResult.NeedPermission ->
+                _updateState.value = UpdateUiState.Error("请先允许「安装未知应用」，返回后再点一次安装")
+            is com.suitanglu.app.update.InstallResult.Failed ->
+                _updateState.value = UpdateUiState.Error(result.message)
         }
     }
 

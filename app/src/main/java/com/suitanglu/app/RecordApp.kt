@@ -43,6 +43,9 @@ class RecordApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // 尽早读出版本号：UpdateConfig.CURRENT_VERSION 未初始化时会退回 "0.0.0"，
+        // 那种状态下任何 Release 都会被判成"更新"，白弹一次窗
+        com.suitanglu.app.update.UpdateConfig.readInstalledVersion(this)
         container = AppGraph.init(this)
         recoverUnfinishedRecordings()
         // 图标切换是"启用/禁用组件"，某些系统更新或清数据后会回到 manifest 默认值，

@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import com.suitanglu.app.AppGraph
 import com.suitanglu.app.ui.nav.RecordNavHost
 import com.suitanglu.app.ui.components.AppAlertDialog
+import com.suitanglu.app.ui.components.UpdatePromptHost
 import com.suitanglu.app.ui.theme.RecordTheme
 import java.security.MessageDigest
 
@@ -127,6 +128,8 @@ class MainActivity : ComponentActivity() {
                                 permissionLauncher.launch(list.toTypedArray())
                             },
                         )
+                        // 启动时静默查一次更新，有新版就弹窗（同版本只提醒一次）
+                        UpdatePromptHost()
                     }
                 }
             }
