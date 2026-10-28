@@ -72,11 +72,16 @@ fun MarkdownView(text: String, modifier: Modifier = Modifier) {
             .height(contentHeightDp.dp),
         factory = { webView },
         update = { wv ->
-            state.pending = text to dark
-            if (state.pageReady) {
-                wv.evaluateJavascript(
-                    "window.render(${JSONObject.quote(text)}, $dark)", null,
-                )
+            // 只在文本/主题真的变了才重渲染：update 每次重组都会跑，
+            // 无条件调用等于整块内容反复重建，看着闪
+            val next = text to dark
+            if (state.pending != next) {
+                state.pending = next
+                if (state.pageReady) {
+                    wv.evaluateJavascript(
+                        "window.render(${JSONObject.quote(text)}, $dark)", null,
+                    )
+                }
             }
         },
     )

@@ -1513,11 +1513,14 @@ private fun MarkerCard(
                     )
                 }
                 Spacer(Modifier.width(10.dp))
+                // 展开后不再截断：折叠时是摘要，2 行够用；展开是"我要看全"，
+                // 这时候还留省略号就是 bug。没有备注时标题退成"照片标记"，
+                // 别再重复一遍下方已经完整显示的 AI 回答
                 Text(
-                    markerPreview(marker),
+                    if (expanded && marker.userText.isNullOrBlank()) "照片标记" else markerPreview(marker),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = if (expanded) 3 else 2,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )

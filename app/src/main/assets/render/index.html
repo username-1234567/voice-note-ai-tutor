@@ -80,11 +80,30 @@ function render(text, dark) {
   var html = md.render(ex.text);
   html = restoreMath(html, ex.math);
   document.getElementById('content').innerHTML = html;
-  if (window.android && window.android.reportHeight) {
-    window.android.reportHeight(document.body.scrollHeight);
+  reportHeight();
+  // 公式字体、图片都是异步撑开的：首帧量到的高度会偏小，
+  // 只报这一次的话 WebView 就停在那个高度上，回答下半截直接被裁掉
+  requestAnimationFrame(reportHeight);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(reportHeight).catch(function () {});
   }
 }
 window.render = render;
+
+var lastReportedHeight = -1;
+function reportHeight() {
+  if (!window.android || !window.android.reportHeight) return;
+  var h = document.body.scrollHeight;
+  // 高度没变就不报：Compose 那边会重新测量，报一次就够
+  if (Math.abs(h - lastReportedHeight) < 0.5) return;
+  lastReportedHeight = h;
+  window.android.reportHeight(h);
+}
+
+// 内容后续变化（图片加载完、字体回退、行内公式换行）继续跟着报
+if (window.ResizeObserver) {
+  new ResizeObserver(function () { reportHeight(); }).observe(document.body);
+}
 </script>
 </body>
 </html>
