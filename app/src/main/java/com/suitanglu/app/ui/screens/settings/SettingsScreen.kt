@@ -162,9 +162,8 @@ fun SettingsScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable { vm.saveAppIcon(alias) },
                         ) {
-                            Image(
-                                painter = painterResource(iconResOf(alias)),
-                                contentDescription = com.suitanglu.app.util.AppIconManager.labelOf(alias),
+                            com.suitanglu.app.ui.components.IconPreview(
+                                alias = alias,
                                 modifier = Modifier
                                     .size(58.dp)
                                     .clip(RoundedCornerShape(16.dp))
@@ -331,12 +330,4 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
         }
     }
-}
-
-/** alias → mipmap 资源。设置页的预览直接用 adaptive icon 本身，不另做缩略图。 */
-private fun iconResOf(alias: String): Int = when (alias) {
-    com.suitanglu.app.util.AppIconManager.TEAL -> R.mipmap.ic_launcher_teal
-    com.suitanglu.app.util.AppIconManager.CLAY -> R.mipmap.ic_launcher_clay
-    com.suitanglu.app.util.AppIconManager.INK -> R.mipmap.ic_launcher_ink
-    else -> R.mipmap.ic_launcher
 }

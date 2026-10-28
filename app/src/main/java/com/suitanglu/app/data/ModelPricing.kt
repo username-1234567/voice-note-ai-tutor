@@ -77,10 +77,19 @@ object ModelPricing {
         return (miss * r.miss + hit * r.hit + completionTokens * r.out) / 1_000_000.0
     }
 
-    /** 每轮按自己的完成时间判断峰谷：一节课可能横跨 12:00 这个分界 */
-    fun costOf(turns: List<MarkerTurn>, model: String): Double = turns.sumOf { t ->
-        costYuan(model, t.promptTokens, t.cacheHitTokens, t.completionTokens, t.updatedAt)
-    }
+    /**
+     * 每轮按自己的完成时间判断峰谷：一节课可能横跨 12:00 这个分界。
+     *
+     * 只统计 promptTokens > 0 的轮次：早先的版本没向服务端要 usage，
+     * 那些轮次的 promptTokens 恒为 0、completionTokens 是估算值，
+     * 算出来的钱只有输出部分，比实际低一个数量级——宁可显示"没有数据"，
+     * 也不该给一个看着精确其实错了一位数的金额。
+     */
+    fun costOf(turns: List<MarkerTurn>, model: String): Double = turns
+        .filter { it.promptTokens > 0 }
+        .sumOf { t ->
+            costYuan(model, t.promptTokens, t.cacheHitTokens, t.completionTokens, t.updatedAt)
+        }
 
     /** 空字符串表示"没有可显示的量"，调用方据此决定是否渲染，避免满屏 ¥0.00 */
     fun format(yuan: Double): String = when {

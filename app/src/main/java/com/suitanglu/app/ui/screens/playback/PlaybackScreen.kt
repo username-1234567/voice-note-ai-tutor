@@ -818,10 +818,6 @@ private fun CourseDigestCard(
     var question by rememberSaveable { mutableStateOf("") }
     val body = digest?.content
 
-    LaunchedEffect(body != null) {
-        if (body != null) expanded = true
-    }
-
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -892,7 +888,15 @@ private fun CourseDigestCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(10.dp))
-                    Button(onClick = onGenerate, enabled = markerCount > 0) {
+                    // 展开交给人来触发：进入页面时不展开（原来靠"body 非空"推断，
+                    // digest 异步加载完成那一刻也会触发，等于每次进来都是展开态）
+                    Button(
+                        onClick = {
+                            expanded = true
+                            onGenerate()
+                        },
+                        enabled = markerCount > 0,
+                    ) {
                         Text("生成复习提纲")
                     }
                 }
@@ -1333,13 +1337,16 @@ fun MarkerProgressBar(
                 m.aiStatus == Marker.AI_SUCCESS -> successColor
                 else -> pendingColor
             }
-            // 区间填充：一条加粗的半透明横条
-            if (x1 - x0 > barHeight) {
+            // 区间条画在轨道**下方**，不覆盖轨道本身：
+            // 覆盖式填充会和"已播放部分"同色叠在一起，看不出边界；
+            // 而且原来的阈值是 8dp，两张图隔得近时整个区间直接不画。
+            if (x1 - x0 > 2.dp.toPx()) {
+                val barY = y + barHeight * 1.9f
                 drawRoundRect(
-                    color = color.copy(alpha = 0.28f),
-                    topLeft = Offset(x0, y - barHeight * 0.8f),
-                    size = androidx.compose.ui.geometry.Size(x1 - x0, barHeight * 1.6f),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(barHeight * 0.8f),
+                    color = color.copy(alpha = 0.55f),
+                    topLeft = Offset(x0, barY - 1.5.dp.toPx()),
+                    size = androidx.compose.ui.geometry.Size(x1 - x0, 3.dp.toPx()),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5.dp.toPx()),
                 )
             }
             // 起止两个端点
@@ -1485,15 +1492,16 @@ private fun MarkerCard(
                     Formatters.clockTime(marker.offsetMs),
                     style = MaterialTheme.typography.titleSmall.tabularNumbers(),
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 2.dp),
+                    modifier = Modifier.alignByBaseline(),
                 )
                 if (costLabel.isNotEmpty()) {
                     Spacer(Modifier.width(4.dp))
+                    // 基线对齐而不是手工 padding：两行字号不同，固定 top 在不同字体缩放下会错开
                     Text(
                         costLabel,
                         style = MaterialTheme.typography.labelSmall.tabularNumbers(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.alignByBaseline(),
                     )
                 }
                 Spacer(Modifier.width(10.dp))

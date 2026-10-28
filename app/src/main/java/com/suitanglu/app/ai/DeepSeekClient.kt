@@ -119,6 +119,15 @@ class DeepSeekClient(
                         },
                     )
                     put("stream", config.stream)
+                    // DeepSeek 的流式接口默认不返回 usage，拿不到 prompt_tokens 的话
+                    // 成本只能算到输出部分，价格会低一个数量级。
+                    // 只对官方端点加：部分第三方兼容服务不认 stream_options，会直接 400。
+                    if (config.stream && config.model.contains("deepseek", ignoreCase = true)) {
+                        put(
+                            "stream_options",
+                            buildJsonObject { put("include_usage", true) },
+                        )
+                    }
                     // 思考强度：只在官方端点上发。
                     // 第三方 OpenAI 兼容服务大多不认 thinking / reasoning_effort，硬塞会被 400 掉，
                     // 所以按 host 判断，而不是让用户再配一个"兼容模式"开关。
