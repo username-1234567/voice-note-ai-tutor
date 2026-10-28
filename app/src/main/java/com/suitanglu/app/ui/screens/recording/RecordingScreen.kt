@@ -560,7 +560,7 @@ fun RecordingScreen(
     if (showStopConfirm) {
         AppAlertDialog(
             title = "停止录音",
-            message = "录音会先保存。结束后到回放页点「发送全部」交给 AI 讲解，且无法继续录这一段。",
+            message = "结束后无法续录",
             confirmLabel = "停止录音",
             dismissLabel = "继续录",
             destructive = true,
@@ -580,7 +580,7 @@ fun RecordingScreen(
             Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
                 Text("只标记，不拍照", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 4.dp))
                 Text(
-                    "记下当前时间点，可带备注。",
+                    "记个时间点",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 14.dp),
@@ -631,7 +631,7 @@ fun RecordingScreen(
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
                 Text(
-                    "保存后加入讲解队列，录音结束后统一发送。",
+                    "保存后可发给 AI",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 14.dp),
@@ -718,7 +718,7 @@ fun RecordingScreen(
                 }
                 Spacer(Modifier.height(24.dp))
                 Text(
-                    "系统相机中断录音时，可在设置里改用应用内相机。",
+                    "中断录音可在设置改用应用内相机",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

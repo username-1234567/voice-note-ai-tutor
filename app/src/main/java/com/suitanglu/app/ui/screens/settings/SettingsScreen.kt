@@ -151,7 +151,7 @@ fun SettingsScreen(
 
             SettingsSection("应用图标") {
                 Text(
-                    "换完回桌面确认，部分系统需几秒刷新。",
+                    "部分系统需几秒刷新",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
