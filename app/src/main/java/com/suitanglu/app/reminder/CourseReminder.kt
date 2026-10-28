@@ -96,10 +96,13 @@ object ReminderScheduler {
                     .toInstant()
                     .toEpochMilli()
                 val trigger = startMs - leadMinutes * 60_000L
+                // 这一格没配课程名就不提醒：课表是空的（或这节课没排）时，
+                // 不该按默认时段冒出"下一节课"的通知
+                val name = runCatching { settings.courseNameNow(weekday, slot.index) }
+                    .getOrDefault("").trim()
+                if (name.isEmpty()) continue
                 // 至少留 30 秒余量，否则刚排上就已经过期，会立刻弹
                 if (trigger > now + 30_000) {
-                    val name = runCatching { settings.courseNameNow(weekday, slot.index) }
-                        .getOrDefault("").ifBlank { "下一节课" }
                     return trigger to name
                 }
             }

@@ -61,6 +61,7 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -146,6 +147,8 @@ import com.suitanglu.app.ui.theme.recordColors
 import com.suitanglu.app.ui.theme.rememberReducedMotion
 import com.suitanglu.app.ui.theme.tabularNumbers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /** 快进/快退步长；配合 Replay10 / Forward10 图标，图标本身就是"10 秒" */
@@ -728,6 +731,17 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         else mergeSel.add(marker.id)
                     },
                     onEditPrompt = { promptTarget = marker },
+                    onSaveImage = { img ->
+                        scope.launch {
+                            val ctx = context
+                            val ok = withContext(Dispatchers.IO) {
+                                com.suitanglu.app.util.GallerySaver.save(ctx, img.filePath)
+                            }
+                            snackbar.showSnackbar(
+                                if (ok) "已保存到相册" else "保存失败，请重试",
+                            )
+                        }
+                    },
                     onOpenMerged = {
                         val headId = marker.mergedInto
                         if (headId != null) {
@@ -1355,6 +1369,7 @@ private fun MarkerCard(
     onStopTurn: (Long) -> Unit,
     onResendMarker: () -> Unit,
     onEditImage: (MarkerImage) -> Unit,
+    onSaveImage: (MarkerImage) -> Unit,
     onToggleReview: () -> Unit,
     /** 这一条讲解花了多少钱；空串表示不展示（非 DeepSeek 端点或还没生成过） */
     costLabel: String,
@@ -1716,6 +1731,15 @@ private fun MarkerCard(
                         Icon(
                             Icons.Filled.Crop,
                             contentDescription = "裁剪这张图",
+                            tint = Color.White,
+                        )
+                    }
+                    IconButton(
+                        onClick = { onSaveImage(img) },
+                    ) {
+                        Icon(
+                            Icons.Outlined.Download,
+                            contentDescription = "保存到相册",
                             tint = Color.White,
                         )
                     }
