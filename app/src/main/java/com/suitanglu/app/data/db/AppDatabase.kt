@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatSession::class,
         DirectMessage::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -142,6 +142,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // NOT NULL 必须带 DEFAULT，否则已有行无法满足约束
+                db.execSQL("ALTER TABLE `marker_turns` ADD COLUMN `active` INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         /**
          * 全部迁移，按顺序。
          *
@@ -150,7 +157,7 @@ abstract class AppDatabase : RoomDatabase() {
          * "A migration from 2 to 3 was required but not found"，用户看到的就是"导入失败"。
          */
         val ALL_MIGRATIONS: Array<Migration> =
-            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(

@@ -649,8 +649,11 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         ModelPricing.costOf(turnsByMarker.values.flatten(), aiModel),
                     )
                     if (totalCost.isNotEmpty()) {
+                        // 「累计」不是修饰：编辑、重新生成、合并都保留旧版本，
+                        // 每个版本都是一次真实调用、真实扣费，所以这里加的是全部版本，
+                        // 和各条标记"当前显示的那一版"之和对不上是正常的
                         Text(
-                            totalCost,
+                            "累计 $totalCost",
                             style = MaterialTheme.typography.labelMedium.tabularNumbers(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(end = 8.dp),
@@ -735,6 +738,7 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         else mergeSel.add(marker.id)
                     },
                     onEditPrompt = { promptTarget = marker },
+                    onSelectVariantTurn = { turnId -> vm.selectVariant(marker.id, turnId) },
                     onSaveImage = { img ->
                         scope.launch {
                             val ctx = context
@@ -1437,6 +1441,8 @@ private fun MarkerCard(
     onToggleMerge: () -> Unit,
     onEditPrompt: () -> Unit,
     onOpenMerged: () -> Unit,
+    /** 切到某一轮的另一版（编辑/重新生成留下的历史版本） */
+    onSelectVariantTurn: (Long) -> Unit,
     /** 改过图之后自增，用来让已展开的卡片重新拉一次图片列表 */
     imageVersion: Int,
     loadImages: suspend (Marker) -> List<MarkerImage>,
@@ -1643,18 +1649,28 @@ private fun MarkerCard(
                         }
                     }
                 } else {
-                    turns.forEachIndexed { index, turn ->
+                    // 同一 orderIndex 可能有多版（编辑/重新生成都会新建一版），
+                    // 只渲染生效那版，其余靠「1/2」切
+                    val turnGroups = turns.groupBy { it.orderIndex }.toSortedMap().values.toList()
+                    turnGroups.forEachIndexed { groupIdx, versions ->
+                        val live = versions.firstOrNull { it.active } ?: versions.last()
+                        val liveIdx = versions.indexOfFirst { it.id == live.id }.coerceAtLeast(0)
                         TurnView(
-                            turn = turn,
-                            streaming = streaming?.takeIf { it.turnId == turn.id },
-                            onStopTurn = { onStopTurn(turn.id) },
-                            onRegenerate = { onRegenerateTurn(turn.id) },
+                            turn = live,
+                            streaming = streaming?.takeIf { it.turnId == live.id },
+                            onStopTurn = { onStopTurn(live.id) },
+                            onRegenerate = { onRegenerateTurn(live.id) },
                             onEdit = {
-                                editingTurnId = turn.id
-                                editDraft = turn.question.orEmpty()
+                                editingTurnId = live.id
+                                editDraft = live.question.orEmpty()
+                            },
+                            variantIndex = liveIdx + 1,
+                            variantTotal = versions.size,
+                            onSelectVariant = { target ->
+                                versions.getOrNull(target)?.let { onSelectVariantTurn(it.id) }
                             },
                         )
-                        if (index < turns.lastIndex) Spacer(Modifier.height(8.dp))
+                        if (groupIdx < turnGroups.lastIndex) Spacer(Modifier.height(8.dp))
                     }
 
                     // 编辑提问：用弹窗，不再在轮次下方展开一个内联输入框。
@@ -1663,7 +1679,7 @@ private fun MarkerCard(
                     editingTurnId?.let { turnId ->
                         AppAlertDialog(
                             title = "编辑提问",
-                            message = "改完后会用新问题重新生成这条回答，原来的回答会被替换。",
+                            message = "改完会另起一版，旧版保留，可用 1/2 切回。",
                             confirmLabel = "重新生成",
                             confirmEnabled = editDraft.isNotBlank(),
                             onConfirm = {
@@ -1824,6 +1840,12 @@ private fun TurnView(
     onStopTurn: () -> Unit,
     onRegenerate: () -> Unit,
     onEdit: () -> Unit,
+    /** 当前是这一轮的第几版（1 起） */
+    variantIndex: Int = 1,
+    /** 这一轮一共几版 */
+    variantTotal: Int = 1,
+    /** 切到指定版本，参数是 0 起的索引 */
+    onSelectVariant: (Int) -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth()) {
         // 问题气泡（首轮为实际发送的提示词，可编辑）
@@ -1843,8 +1865,48 @@ private fun TurnView(
                 )
             }
         }
-        // 编辑放在问题气泡正下方
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        // 版本切换 + 编辑：编辑/重新生成都会新建一版而不是覆盖，所以这里能来回切
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (variantTotal > 1) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "‹",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (variantIndex > 1) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(enabled = variantIndex > 1) { onSelectVariant(variantIndex - 2) }
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                    Text(
+                        "$variantIndex/$variantTotal",
+                        style = MaterialTheme.typography.labelMedium.tabularNumbers(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "›",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (variantIndex < variantTotal) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(enabled = variantIndex < variantTotal) { onSelectVariant(variantIndex) }
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+            }
             TextButton(onClick = onEdit) {
                 Icon(Icons.Filled.Edit, contentDescription = null, Modifier.size(14.dp))
                 Spacer(Modifier.width(2.dp))

@@ -200,6 +200,26 @@ interface MarkerTurnDao {
     @Query("SELECT * FROM marker_turns WHERE markerId = :markerId ORDER BY orderIndex ASC, id ASC")
     suspend fun getByMarker(markerId: Long): List<MarkerTurn>
 
+    /**
+     * 每轮只取当前生效的那一版。
+     *
+     * 拼上下文必须用它：同一 orderIndex 下可能躺着好几版（编辑/重新生成留下的），
+     * 全塞进 messages 的话，模型会看到"同一个问题被问了两遍、答了两次"。
+     */
+    @Query(
+        "SELECT * FROM marker_turns WHERE markerId = :markerId AND active = 1 " +
+            "ORDER BY orderIndex ASC, id ASC",
+    )
+    suspend fun getActiveByMarker(markerId: Long): List<MarkerTurn>
+
+    /** 把某一轮的所有版本置为失效，随后插入的新版才是生效的 */
+    @Query("UPDATE marker_turns SET active = 0 WHERE markerId = :markerId AND orderIndex = :orderIndex")
+    suspend fun deactivateVariants(markerId: Long, orderIndex: Int)
+
+    /** 切到指定版本：先整组失效，再把这一版点亮 */
+    @Query("UPDATE marker_turns SET active = 1 WHERE id = :turnId")
+    suspend fun activateVariant(turnId: Long)
+
     @Query("SELECT * FROM marker_turns ORDER BY markerId ASC, orderIndex ASC, id ASC")
     suspend fun getAll(): List<MarkerTurn>
 

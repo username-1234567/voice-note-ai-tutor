@@ -257,6 +257,13 @@ class PlaybackViewModel(app: Application, val recordingId: Long) : AndroidViewMo
         }
     }
 
+    /** 切到某一轮的另一版（编辑/重新生成留下的历史版本） */
+    fun selectVariant(markerId: Long, turnId: Long) {
+        container.appScope.launch {
+            container.aiSendManager.selectVariant(markerId, turnId)
+        }
+    }
+
     /** 手动停止生成：保留已生成的部分，可追问“继续”接上 */
     fun stopTurn(turnId: Long) {
         container.aiSendManager.stopTurn(turnId)

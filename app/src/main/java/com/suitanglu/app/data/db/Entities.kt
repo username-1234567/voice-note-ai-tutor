@@ -1,5 +1,6 @@
 package com.suitanglu.app.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
@@ -111,6 +112,15 @@ data class MarkerTurn(
     val finishReason: String? = null, // length = 达到最大输出被截断
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /**
+     * 同一 (markerId, orderIndex) 下可能有多版：编辑问题、重新生成都会新建一版，
+     * 而不是覆盖上一版。只有一版为 true，界面上用「1/2」切换。
+     *
+     * 之所以保留旧版：编辑一次就丢掉原来的回答，用户没法对比，
+     * 也看不到"上一版讲了什么"——而那一版是花过钱的。
+     */
+    @ColumnInfo(defaultValue = "1")
+    val active: Boolean = true,
 ) {
     companion object {
         const val TURN_PENDING = "pending"

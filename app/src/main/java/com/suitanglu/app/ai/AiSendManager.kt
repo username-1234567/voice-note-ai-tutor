@@ -104,7 +104,7 @@ class AiSendManager(
 
     /** 确保首轮（orderIndex=0）存在并生成；自动讲解与“单条重发”都走这里 */
     suspend fun ensureTurn0AndGenerate(marker: Marker): Boolean {
-        val existing = db.markerTurnDao().getByMarker(marker.id).firstOrNull { it.orderIndex == 0 }
+        val existing = db.markerTurnDao().getActiveByMarker(marker.id).firstOrNull { it.orderIndex == 0 }
         // 注意：insert 后必须用返回的 rowId 构造对象，否则后续按 id 的 update 全部落空
         val turn = existing ?: db.markerTurnDao().insert(
             MarkerTurn(markerId = marker.id, orderIndex = 0),
@@ -131,13 +131,40 @@ class AiSendManager(
         }
     }
 
-    /** 重新生成某一轮（丢弃其后的轮次，前缀不变 → 命中上下文缓存） */
+    /**
+     * 重新生成某一轮。
+     *
+     * 旧版不删：新建一版并置为生效，界面上用「1/2」切回。
+     * 原来的做法是 deleteAfter + 覆盖同一行，等于把旧答案和它的花费一起抹掉，
+     * 用户想对比两版讲了什么就没机会了。
+     */
     suspend fun regenerateTurn(markerId: Long, turnId: Long): Boolean {
         val marker = db.markerDao().getById(markerId) ?: return false
         val turn = db.markerTurnDao().getById(turnId) ?: return false
-        db.markerTurnDao().deleteAfter(markerId, turn.orderIndex)
+        // 失败的空版本不值得留：直接复用这一行。
+        // 否则每点一次「重试」就多出一个"生成失败"的空壳，1/2、1/3… 越积越多
+        if (turn.answer.isNullOrBlank()) {
+            db.markerTurnDao().deactivateVariants(markerId, turn.orderIndex)
+            val revived = turn.copy(active = true, status = MarkerTurn.TURN_PENDING, error = null)
+            db.markerTurnDao().update(revived)
+            return try {
+                generateTurn(marker, revived)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false
+            }
+        }
+        db.markerTurnDao().deactivateVariants(markerId, turn.orderIndex)
+        val fresh = MarkerTurn(
+            markerId = markerId,
+            orderIndex = turn.orderIndex,
+            question = turn.question,
+            active = true,
+        )
+        val id = db.markerTurnDao().insert(fresh)
         return try {
-            generateTurn(marker, turn)
+            generateTurn(marker, fresh.copy(id = id))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -145,19 +172,43 @@ class AiSendManager(
         }
     }
 
-    /** 编辑某轮问题（含首轮提示词）并重新答复（其后轮次丢弃） */
+    /** 编辑某轮问题（含首轮提示词）并重新答复：同样保留旧版，后续追问不再丢弃 */
     suspend fun editTurn(markerId: Long, turnId: Long, newQuestion: String): Boolean {
         val marker = db.markerDao().getById(markerId) ?: return false
         val turn = db.markerTurnDao().getById(turnId) ?: return false
-        db.markerTurnDao().deleteAfter(markerId, turn.orderIndex)
-        val edited = turn.copy(question = newQuestion, updatedAt = System.currentTimeMillis())
-        db.markerTurnDao().update(edited)
+        db.markerTurnDao().deactivateVariants(markerId, turn.orderIndex)
+        val fresh = MarkerTurn(
+            markerId = markerId,
+            orderIndex = turn.orderIndex,
+            question = newQuestion,
+            active = true,
+        )
+        val id = db.markerTurnDao().insert(fresh)
         return try {
-            generateTurn(marker, edited)
+            generateTurn(marker, fresh.copy(id = id))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             false
+        }
+    }
+
+    /** 切到某一轮的另一版：整组先失效，再点亮目标 */
+    suspend fun selectVariant(markerId: Long, turnId: Long) {
+        val turn = db.markerTurnDao().getById(turnId) ?: return
+        db.markerTurnDao().deactivateVariants(markerId, turn.orderIndex)
+        db.markerTurnDao().activateVariant(turnId)
+        // 首轮换版后，标记卡片上那句"讲解"要跟着换，否则列表和详情各说各的
+        if (turn.orderIndex == 0) {
+            turn.answer?.let { answer ->
+                db.markerDao().updateAi(
+                    markerId,
+                    if (turn.status == MarkerTurn.TURN_FAILED) Marker.AI_FAILED else Marker.AI_SUCCESS,
+                    answer,
+                    turn.error,
+                    System.currentTimeMillis(),
+                )
+            }
         }
     }
 
@@ -194,8 +245,10 @@ class AiSendManager(
             db.markerTurnDao().update(current)
         }
 
-        // 上下文：此前各轮问答原文（首轮的 user 消息带图）
-        val history = db.markerTurnDao().getByMarker(marker.id).filter { it.orderIndex < current.orderIndex }
+        // 上下文：此前各轮问答原文（首轮的 user 消息带图）。
+        // 只取 active 版本——同一轮可能有多版，全塞进去模型会看到重复问答
+        val history = db.markerTurnDao().getActiveByMarker(marker.id)
+            .filter { it.orderIndex < current.orderIndex }
         val messages = mutableListOf<ChatMessage>()
         for (t in history) {
             messages += ChatMessage(
@@ -379,8 +432,9 @@ class AiSendManager(
                 }
             }
 
-            // 合并即重做：之前的单条讲解（若有）整体作废
-            db.markerTurnDao().deleteByMarker(head.id)
+            // 合并即重做，但旧讲解不删：它已经花过钱，删掉等于把真实支出从账上抹掉。
+            // 把旧版置为非生效、新讲解作为当前版，用户还能用 1/2 切回看单条讲解
+            db.markerTurnDao().deactivateVariants(head.id, 0)
             val turnId = db.markerTurnDao().insert(
                 MarkerTurn(markerId = head.id, orderIndex = 0, question = question),
             )
@@ -429,6 +483,8 @@ class AiSendManager(
                 val endOffset = members.last().offsetMs
                 members.drop(1).forEach { m ->
                     db.markerImageDao().reassignTo(m.id, head.id)
+                    // 成员的旧讲解也保留：它们是真实发生过的调用，
+                    // 汇总"这节课花了多少"时必须算进去（成员标记本身在列表里已隐藏）
                     db.markerDao().mergeInto(m.id, head.id, Marker.AI_SUCCESS, t)
                 }
                 db.markerDao().setMergedEnd(
