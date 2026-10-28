@@ -13,10 +13,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -53,7 +53,11 @@ jobs:
           fi
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk "record-${GITHUB_REF_NAME}.apk"
+        run: |
+          # 标签触发时是 v1.5.2；手动触发时是分支名，可能带斜杠，先压平
+          NAME="$(echo "$GITHUB_REF_NAME" | tr '/' '-')"
+          cp app/build/outputs/apk/release/app-release.apk "record-${NAME}.apk"
+          echo "APK_NAME=record-${NAME}.apk" >> "$GITHUB_ENV"
 
       # 只有标签才发布；手动触发仅用于验证构建链路，不产生 Release。
       - name: Create Release and upload APK
@@ -62,9 +66,9 @@ jobs:
         with:
           name: 随堂录 ${{ github.ref_name }}
           body: |
-            安装包：`record-${{ github.ref_name }}.apk`
+            安装包：`${{ env.APK_NAME }}`
 
             更新内容见 [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)。
-          files: record-${{ github.ref_name }}.apk
+          files: ${{ env.APK_NAME }}
           draft: false
           prerelease: false
