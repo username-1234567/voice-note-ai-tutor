@@ -218,6 +218,9 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("提前", style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.width(10.dp))
+                        // 单位放输入框外面，不用 suffix：
+                        // suffix 是紧跟在输入文字后面的，框又固定 150dp 宽，
+                        // 于是「5」后面空一大截、「分钟」也不贴右边缘，看着像没对齐
                         OutlinedTextField(
                             value = leadText,
                             onValueChange = { raw ->
@@ -225,9 +228,10 @@ fun SettingsScreen(
                             },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            suffix = { Text("分钟") },
-                            modifier = Modifier.width(150.dp),
+                            modifier = Modifier.width(88.dp),
                         )
+                        Spacer(Modifier.width(10.dp))
+                        Text("分钟", style = MaterialTheme.typography.bodyMedium)
                     }
                     Text(
                         "1–60 分钟。只对配置了课程名的时段生效，周末不提醒；系统省电策略可能让通知稍晚几分钟。",

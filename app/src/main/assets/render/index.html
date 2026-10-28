@@ -7,27 +7,42 @@
 <script src="markdown-it.min.js"></script>
 <script src="katex.min.js"></script>
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; }
+  html, body { margin: 0; padding: 0; background: transparent; overflow-x: hidden; }
   body {
     font-family: -apple-system, "MiSans", "HarmonyOS Sans", "Noto Sans CJK SC", sans-serif;
-    font-size: 14px; line-height: 1.75; word-break: break-word;
+    font-size: 14px; line-height: 1.75; word-break: break-word; overflow-wrap: break-word;
     padding: 0 2px;
   }
   body.dark { color: #E4E2DE; }
   body.light { color: #3A3630; }
   p { margin: 0.4em 0; }
-  h1, h2, h3, h4 { margin: 0.8em 0 0.4em; line-height: 1.4; }
+  h1, h2, h3, h4, h5, h6 { margin: 0.8em 0 0.4em; line-height: 1.4; }
+  h1 { font-size: 1.32em; }
+  h2 { font-size: 1.2em; }
+  h3 { font-size: 1.08em; }
+  h4, h5, h6 { font-size: 1em; }
   pre {
     background: rgba(127,127,127,0.14); border-radius: 8px; padding: 10px 12px;
-    overflow-x: auto; font-size: 13px; line-height: 1.5;
+    /* 代码长行必须折行：手机上横向滚动几乎没人用，而 overflow 又会把
+       整个 WebView 撑宽，右侧内容直接被裁掉。
+       width/box-sizing 是必须的：只写 white-space: pre-wrap 时 pre 仍会
+       被最长的不可断片段撑开，背景直接顶出屏幕 */
+    box-sizing: border-box; width: 100%; max-width: 100%;
+    white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+    overflow-x: hidden; font-size: 13px; line-height: 1.5;
   }
-  code { background: rgba(127,127,127,0.16); border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+  code { background: rgba(127,127,127,0.16); border-radius: 4px; padding: 1px 5px; font-size: 13px; overflow-wrap: anywhere; }
   pre code { background: transparent; padding: 0; }
-  table { border-collapse: collapse; margin: 0.6em 0; display: block; overflow-x: auto; }
+  table {
+    border-collapse: collapse; margin: 0.6em 0;
+    display: block; overflow-x: auto; max-width: 100%;
+  }
   th, td { border: 1px solid rgba(127,127,127,0.4); padding: 5px 10px; font-size: 13px; }
   blockquote { margin: 0.5em 0; padding: 2px 12px; border-left: 3px solid rgba(127,127,127,0.45); color: inherit; opacity: 0.85; }
-  ul, ol { margin: 0.3em 0; padding-left: 1.5em; }
-  img { max-width: 100%; }
+  ul, ol { margin: 0.3em 0; padding-left: 1.6em; }
+  li { margin: 0.15em 0; }
+  img { max-width: 100%; height: auto; }
+  hr { border: none; border-top: 1px solid rgba(127,127,127,0.3); margin: 1em 0; }
   .katex { font-size: 1.05em; }
   .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; margin: 0.5em 0; }
   .math-fallback { background: rgba(127,127,127,0.16); border-radius: 4px; padding: 1px 5px; font-size: 13px; }
