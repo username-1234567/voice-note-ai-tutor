@@ -91,10 +91,16 @@ object ModelPricing {
             costYuan(model, t.promptTokens, t.cacheHitTokens, t.completionTokens, t.updatedAt)
         }
 
-    /** 空字符串表示"没有可显示的量"，调用方据此决定是否渲染，避免满屏 ¥0.00 */
+    /**
+     * 空字符串表示"没有可显示的量"，调用方据此决定是否渲染，避免满屏 ¥0.00。
+     *
+     * 小额给三位小数：单次讲解常在几分钱上下，两位小数会把 0.081、0.084
+     * 一律显示成 ¥0.08 —— 每条标记看起来"价格都一样"，像是算错了。
+     */
     fun format(yuan: Double): String = when {
         yuan <= 0.0 -> ""
-        yuan < 0.01 -> "<¥0.01"
+        yuan < 0.001 -> "<¥0.001"
+        yuan < 0.1 -> String.format(Locale.US, "¥%.3f", yuan)
         else -> String.format(Locale.US, "¥%.2f", yuan)
     }
 }

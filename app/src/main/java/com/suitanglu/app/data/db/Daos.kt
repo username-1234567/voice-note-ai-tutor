@@ -184,6 +184,19 @@ interface MarkerTurnDao {
     @Query("SELECT * FROM marker_turns ORDER BY markerId ASC, orderIndex ASC, id ASC")
     fun observeAll(): Flow<List<MarkerTurn>>
 
+    /**
+     * 只订阅某条录音的轮次。
+     *
+     * 详情页之前用的是 observeAll()，于是"这节课花了多少钱"算成了**全库总价**：
+     * 每条录音打开都显示同一个数字，连一条标记都没有的录音也会显示——
+     * 用户看到的就是"没有任何标记也显示 0.08 元"。
+     */
+    @Query(
+        "SELECT t.* FROM marker_turns t INNER JOIN markers m ON t.markerId = m.id " +
+            "WHERE m.recordingId = :recordingId ORDER BY t.markerId ASC, t.orderIndex ASC, t.id ASC",
+    )
+    fun observeTurnsByRecording(recordingId: Long): Flow<List<MarkerTurn>>
+
     @Query("SELECT * FROM marker_turns WHERE markerId = :markerId ORDER BY orderIndex ASC, id ASC")
     suspend fun getByMarker(markerId: Long): List<MarkerTurn>
 

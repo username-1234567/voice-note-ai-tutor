@@ -174,8 +174,14 @@ class PlaybackViewModel(app: Application, val recordingId: Long) : AndroidViewMo
         seekTo(marker.offsetMs, keepPlaying = _player.value?.isPlaying)
     }
 
-    /** 某条标记的多轮对话 */
-    val allTurns: StateFlow<List<MarkerTurn>> = container.db.markerTurnDao().observeAll()
+    /**
+     * 某条标记的多轮对话。
+     *
+     * 按录音订阅，不是 observeAll()：那个会把全库轮次读进来，
+     * 页面上的"本节课花费"于是变成全库总价，每条录音都显示同一个数。
+     */
+    val allTurns: StateFlow<List<MarkerTurn>> = container.db.markerTurnDao()
+        .observeTurnsByRecording(recordingId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 发送操作跑在 appScope：离开页面取消 viewModelScope 不再打断生成；

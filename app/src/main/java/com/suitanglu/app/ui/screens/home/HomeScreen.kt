@@ -244,23 +244,27 @@ fun HomeScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    if (isRecording) {
-                        onStartRecording()
-                    } else if (hasNotificationPermission || android.os.Build.VERSION.SDK_INT < 33) {
-                        onStartRecording()
-                    } else {
-                        showNoPermissionHint = true
-                        onRequestPermissions()
-                    }
-                },
-                // 全页唯一的高饱和块：主操作必须最显眼
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text(if (isRecording) "返回录音中" else "开始录音") },
-            )
+            // 多选时收起：这时候页面在做"批量处理"，右下角再浮一个「开始录音」
+            // 既挡列表又抢注意力，还容易误触——它不属于当前这轮操作
+            if (!selectionMode) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (isRecording) {
+                            onStartRecording()
+                        } else if (hasNotificationPermission || android.os.Build.VERSION.SDK_INT < 33) {
+                            onStartRecording()
+                        } else {
+                            showNoPermissionHint = true
+                            onRequestPermissions()
+                        }
+                    },
+                    // 全页唯一的高饱和块：主操作必须最显眼
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text(if (isRecording) "返回录音中" else "开始录音") },
+                )
+            }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
