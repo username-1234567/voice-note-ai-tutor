@@ -32,8 +32,12 @@ object CourseSchedule {
     }
 
     /**
-     * 判定课程名：按开始时间命中星期几 + 时间段。
-     * 结束时间落入另一个时间段视为跨段，课程名视为空。
+     * 判定课程名：看录音区间覆盖了哪一节的时长最多，就归哪一节。
+     *
+     * 早先的两版各有一个极端：第一版"结束时刻落在另一节就判空"，拖堂五分钟整条变未命名；
+     * 第二版"只看开始时刻、结束完全不看"，于是 09:59 开始（落在第 1、2 节的缝隙里）
+     * 也判空。正确的是按 [startTime, endTime] 与每个时段的**重叠时长**取最大者——
+     * 开始早了一分钟、拖堂、连录两节，都归到"这堂课主要在哪节"。
      */
     suspend fun resolveCourseName(
         startTime: Long,
@@ -42,15 +46,34 @@ object CourseSchedule {
         nameOf: suspend (day: Int, slotIndex: Int) -> String?,
     ): Pair<String?, Int?> {
         val day = dayOfWeek(startTime)
-        val slot = matchSlot(startTime, slotsOf(day)) ?: return null to null
-        // 结束时间不参与命名。
-        //
-        // 原实现在"结束时刻落在另一节"时直接返回 null，结果拖堂五分钟、或者连着录了
-        // 两节课（09:59 → 11:34 跨过 11:30），整条录音就变成"未命名"——
-        // 而它 95% 的内容明明属于开始那一节。以开始时刻为准才是符合直觉的。
-        val name = nameOf(day, slot.index)
-        val cleaned = name?.trim()?.takeIf { it.isNotEmpty() } ?: return null to slot.index
-        return cleaned to slot.index
+        val slots = slotsOf(day)
+        val startMin = minutesOf(startTime)
+
+        // 没有结束时间（开始录音那一刻）时，只能用开始时刻就近匹配：
+        // 落在某节内直接取；落在缝隙里取"最近的一节"（离哪个更近归哪个）
+        val effectiveEnd = endTime?.let { minutesOf(it) } ?: startMin
+
+        val best = slots
+            .filter { slot ->
+                // 只要与 [startMin, effectiveEnd] 有重叠就算候选
+                slot.startMinute < effectiveEnd && slot.endMinute > startMin
+            }
+            .maxByOrNull { slot ->
+                val overlapStart = maxOf(slot.startMinute, startMin)
+                val overlapEnd = minOf(slot.endMinute, effectiveEnd)
+                overlapEnd - overlapStart
+            }
+
+        if (best == null) {
+            // 完全没重叠（比如午休录一段、或结束时间也落在缝隙里）：
+            // 退而求其次，按开始时刻就近归到最近的一节，尽量给个名字而不是"未命名"
+            val nearest = slots.minByOrNull { kotlin.math.abs(it.startMinute - startMin) } ?: return null to null
+            val name = nameOf(day, nearest.index)?.trim()?.takeIf { it.isNotEmpty() }
+            return name to nearest.index
+        }
+
+        val name = nameOf(day, best.index)?.trim()?.takeIf { it.isNotEmpty() }
+        return name to best.index
     }
 
     fun displayName(courseName: String?, userTitle: String?): String =
