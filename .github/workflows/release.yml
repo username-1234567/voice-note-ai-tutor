@@ -24,11 +24,12 @@ jobs:
       # GitHub ubuntu-latest runner 已预装 Android SDK 并接受许可证，
       # 缺失的 platform/build-tools 由 AGP 自动下载。
 
-      # 签名凭据不进仓库：keystore 与密钥轮换谱系存于仓库 Secrets（base64）。
-      - name: Decode signing assets
+      # 签名凭据不进仓库：keystore 以 base64 存于仓库 Secrets。
+      # 注意：Secret 必须是纯 ASCII 的 base64 文本。曾经存过二进制内容，
+      # GitHub 会在启动阶段直接拒绝整个工作流（startup_failure，0 个 job）。
+      - name: Decode keystore
         run: |
           echo "${{ secrets.SIGNING_KEYSTORE2_B64 }}" | base64 -d > "$RUNNER_TEMP/v2.jks"
-          echo "${{ secrets.SIGNING_LINEAGE_GZ_B64 }}" | base64 -d | gunzip > "$RUNNER_TEMP/lineage"
 
       - name: Build release APK
         env:
@@ -39,40 +40,31 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon
 
-      # 用 v3 密钥轮换谱系重签（需同时提供新旧签名者）：泄露的旧密钥从此无法覆盖已升级用户
-      - name: Apply key lineage
-        env:
-          KS_PASS: ${{ secrets.SIGNING_STORE_PASSWORD }}
+      # 已安装用户只认同一张证书：装错证书的包谁都无法覆盖安装，还会把
+      # 更新链路整条切断。这里把历史发布的证书指纹钉死，不对就中断。
+      - name: Verify signing certificate
         run: |
-          echo "${{ secrets.SIGNING_OLD_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/old.jks"
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -p 4 \
-            app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/aligned.apk"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
-            --ks "$RUNNER_TEMP/old.jks" --ks-key-alias suitanglu \
-            --ks-pass pass:suitanglu2026 --key-pass pass:suitanglu2026 \
-            --next-signer \
-            --ks "$RUNNER_TEMP/v2.jks" --ks-key-alias suitanglu-v2 \
-            --ks-pass "env:KS_PASS" --key-pass "env:KS_PASS" \
-            --lineage "$RUNNER_TEMP/lineage" \
-            --min-sdk-version 29 --rotation-min-sdk-version 29 --v1-signing-enabled false \
-            --out "record-${GITHUB_REF_NAME}.apk" "$RUNNER_TEMP/aligned.apk"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "record-${GITHUB_REF_NAME}.apk"
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk | tee certs.txt
+          PIN='4c7486f99e99c832d8d60cb5c25b1ee660b5c2b328752db1b791ac2398aa80b9'
+          if ! grep -qi "$PIN" certs.txt; then
+            echo "::error::签名证书与历史发布不一致，拒绝上传"
+            exit 1
+          fi
 
-      - name: Extract version
-        id: ver
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          [ "$TAG" = "${GITHUB_REF_NAME}" ] && TAG="${GITHUB_REF_NAME}"
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk "record-${GITHUB_REF_NAME}.apk"
 
+      # 只有标签才发布；手动触发仅用于验证构建链路，不产生 Release。
       - name: Create Release and upload APK
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: 随堂录 v${{ steps.ver.outputs.version }}
+          name: 随堂录 ${{ github.ref_name }}
           body: |
-            自动构建的发布版本。
+            安装包：`record-${{ github.ref_name }}.apk`
 
-            请下载 `record-${{ github.ref_name }}.apk` 安装。
+            更新内容见 [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)。
           files: record-${{ github.ref_name }}.apk
           draft: false
           prerelease: false
