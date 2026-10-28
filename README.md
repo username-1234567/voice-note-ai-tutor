@@ -9,7 +9,7 @@
 ![platform](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)
 ![kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
-![release](https://img.shields.io/badge/release-v1.5.0-2ea44f)
+![release](https://img.shields.io/badge/release-v1.5.1-2ea44f)
 ![size](https://img.shields.io/badge/APK-6.7%20MB-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-3da639)
 
@@ -80,7 +80,7 @@
 
 ### 方式一：直接安装
 
-到 [Releases](https://github.com/username-1234567/voice-note-ai-tutor/releases) 下载最新的 `app-release.apk`。
+到 [Releases](https://github.com/username-1234567/voice-note-ai-tutor/releases) 下载最新的 `record-v1.5.1.apk`。
 
 > 需要 Android 10 及以上。安装后要先在「设置 → AI 配置」填一个 API Key，否则拍照后没有讲解。
 
