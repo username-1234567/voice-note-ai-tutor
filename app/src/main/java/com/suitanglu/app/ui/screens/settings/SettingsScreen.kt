@@ -234,7 +234,8 @@ fun SettingsScreen(
                         Text("分钟", style = MaterialTheme.typography.bodyMedium)
                     }
                     Text(
-                        "1–60 分钟。只对配置了课程名的时段生效，周末不提醒；系统省电策略可能让通知稍晚几分钟。",
+                        "1–60 分钟。只对配置了课程名的时段生效，周末不提醒；系统省电策略可能让通知稍晚几分钟。" +
+                            "小米/Redmi 还要在系统通知管理里打开「悬浮通知」，否则提醒只静默进通知栏。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -30,14 +30,17 @@ object ReminderScheduler {
     const val CHANNEL_ID = "course_reminder"
     const val EXTRA_COURSE = "course"
     const val EXTRA_MINUTES = "minutes"
+    /** 上课时间点（毫秒）。通知里的倒计时以它为准，不以"收到闹钟的那一刻"为准 */
+    const val EXTRA_START_AT = "start_at"
 
     private const val REQUEST_CODE = 4201
     private val BEIJING: ZoneId = ZoneId.of("Asia/Shanghai")
 
-    private fun pending(context: Context, course: String, minutes: Int): PendingIntent {
+    private fun pending(context: Context, course: String, minutes: Int, startAt: Long): PendingIntent {
         val intent = Intent(context, ReminderReceiver::class.java).apply {
             putExtra(EXTRA_COURSE, course)
             putExtra(EXTRA_MINUTES, minutes)
+            putExtra(EXTRA_START_AT, startAt)
         }
         return PendingIntent.getBroadcast(
             context, REQUEST_CODE, intent,
@@ -48,7 +51,7 @@ object ReminderScheduler {
     /** 取消所有提醒（用户关掉开关时调用） */
     fun cancel(context: Context) {
         val am = context.getSystemService(AlarmManager::class.java) ?: return
-        am.cancel(pending(context, "", 0))
+        am.cancel(pending(context, "", 0, 0L))
     }
 
     /** 重新计算并排下一次。App 启动、录完一条、改完设置都调它 */
@@ -62,7 +65,10 @@ object ReminderScheduler {
 
     private fun schedule(context: Context, triggerAt: Long, course: String, minutes: Int) {
         val am = context.getSystemService(AlarmManager::class.java) ?: return
-        val pi = pending(context, course, minutes)
+        // 上课时间点 = 闹钟时刻 + 提前量。通知里的倒计时按它算，
+        // 这样即使闹钟被省电策略拖晚了几分钟，显示的仍是真实剩余时间
+        val startAt = triggerAt + minutes * 60_000L
+        val pi = pending(context, course, minutes, startAt)
         runCatching {
             // Android 12+ 精确闹钟要单独授权；没授权就退回非精确的
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
@@ -110,7 +116,7 @@ object ReminderScheduler {
         return null
     }
 
-    internal fun notify(context: Context, course: String, minutes: Int) {
+    internal fun notify(context: Context, course: String, startAt: Long) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             nm.getNotificationChannel(CHANNEL_ID) == null
@@ -128,12 +134,30 @@ object ReminderScheduler {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
+
+        val now = System.currentTimeMillis()
+        // 闹钟被省电策略拖晚时，"提前 N 分钟"已经不是真实剩余时间了，
+        // 所以标题按上课时间点现算，倒计时也挂在同一个时间点上
+        val counting = startAt > now
+        val remainMin = if (counting) {
+            ((startAt - now + 59_999) / 60_000).toInt().coerceAtLeast(1)
+        } else {
+            0
+        }
         val n = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_record)
-            .setContentTitle("$minutes 分钟后上课")
+            .setContentTitle(if (counting) "$remainMin 分钟后上课" else "该上课了")
             .setContentText(course)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setWhen(if (counting) startAt else now)
+            // 时间区显示倒计时（API 24+）。自己走，不用每分钟重发通知
+            .setUsesChronometer(counting)
+            .setChronometerCountDown(counting)
             .setAutoCancel(true)
+            .apply {
+                // 归零后倒计时会翻成负数（"-00:05" 看着像坏了），上课一分钟后自动收走
+                if (counting) setTimeoutAfter(startAt - now + 60_000)
+            }
             .also { b -> content?.let { b.setContentIntent(it) } }
             .build()
         runCatching { nm.notify(NOTIFICATION_ID, n) }
@@ -146,7 +170,12 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val course = intent.getStringExtra(ReminderScheduler.EXTRA_COURSE).orEmpty()
         val minutes = intent.getIntExtra(ReminderScheduler.EXTRA_MINUTES, 10)
-        ReminderScheduler.notify(context, course.ifBlank { "下一节课" }, minutes)
+        val startAt = intent.getLongExtra(ReminderScheduler.EXTRA_START_AT, 0L)
+        ReminderScheduler.notify(
+            context,
+            course.ifBlank { "下一节课" },
+            startAt.takeIf { it > 0 } ?: (System.currentTimeMillis() + minutes * 60_000L),
+        )
 
         // 通知发完立刻排下一次；用 goAsync 让进程多活一会儿
         val pending = goAsync()
