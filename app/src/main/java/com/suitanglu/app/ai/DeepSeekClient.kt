@@ -7,13 +7,13 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.Call
@@ -166,28 +166,44 @@ class DeepSeekClient(
             }
         }
 
-    private data class Slice(val text: String, val finishReason: String?, val usage: ChatUsage?)
+    internal data class Slice(val text: String, val finishReason: String?, val usage: ChatUsage?)
 
     /** SSE 与非流式共用的分片解析：choices[0].delta/message.content + finish_reason + usage；error 分片抛出 */
-    private fun parseChunk(payload: String): Slice? {
-        val obj = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull() ?: return null
-        obj["error"]?.jsonObject?.let { e ->
-            throw IOException(e["message"]?.jsonPrimitive?.contentOrNull ?: "API 返回错误")
+    internal fun parseChunk(payload: String): Slice? {
+        val root = runCatching { json.parseToJsonElement(payload) }.getOrNull()
+        val obj = root as? JsonObject ?: return null
+
+        // 全部用 as? 取，不要用 ?.jsonObject / ?.jsonPrimitive。
+        // 那两个取值器遇到类型不对会扔 IllegalArgumentException("Element class X is not a JsonObject")，
+        // 而 X 是 R8 混淆后的类名；这条异常又被 failTurn 原样存成错误提示，
+        // 用户看到的就是"element class M5.u is not a jsonobject"这种天书。
+        // 触发场景很平常：{"error":null}、{"usage":null}、{"delta":null} 都是合法 JSON。
+        val errorNode = obj["error"]
+        if (errorNode != null && errorNode !is JsonNull) {
+            val message = when (errorNode) {
+                is JsonObject -> (errorNode["message"] as? JsonPrimitive)?.contentOrNull
+                // 少数 OpenAI 兼容网关用 {"error":"字符串"} 报错
+                is JsonPrimitive -> errorNode.contentOrNull
+                else -> null
+            }
+            throw IOException(message?.takeIf { it.isNotBlank() } ?: "API 返回错误")
         }
-        val choice = obj["choices"]?.jsonArray?.firstOrNull()?.jsonObject
-        val contentNode = choice?.get("delta")?.jsonObject?.get("content")
-            ?: choice?.get("message")?.jsonObject?.get("content")
-        val text = contentNode?.jsonPrimitive?.contentOrNull.orEmpty()
-        val usageObj = obj["usage"]?.jsonObject
+
+        val choice = (obj["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
+        val contentNode = (choice?.get("delta") as? JsonObject)?.get("content")
+            ?: (choice?.get("message") as? JsonObject)?.get("content")
+        val text = (contentNode as? JsonPrimitive)?.contentOrNull.orEmpty()
+        val finishReason = (choice?.get("finish_reason") as? JsonPrimitive)?.contentOrNull
+        val usageObj = obj["usage"] as? JsonObject
         val usage = usageObj?.let {
             ChatUsage(
-                promptTokens = it["prompt_tokens"]?.jsonPrimitive?.longOrNull?.toInt() ?: 0,
-                cacheHitTokens = it["prompt_cache_hit_tokens"]?.jsonPrimitive?.longOrNull?.toInt() ?: 0,
-                completionTokens = it["completion_tokens"]?.jsonPrimitive?.longOrNull?.toInt() ?: 0,
-                finishReason = choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull,
+                promptTokens = (it["prompt_tokens"] as? JsonPrimitive)?.longOrNull?.toInt() ?: 0,
+                cacheHitTokens = (it["prompt_cache_hit_tokens"] as? JsonPrimitive)?.longOrNull?.toInt() ?: 0,
+                completionTokens = (it["completion_tokens"] as? JsonPrimitive)?.longOrNull?.toInt() ?: 0,
+                finishReason = finishReason,
             )
         }
-        return Slice(text, choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull, usage)
+        return Slice(text, finishReason, usage)
     }
 
     private fun readSse(response: Response, onDelta: (String) -> Unit): Pair<String, ChatUsage> {
@@ -230,8 +246,10 @@ class DeepSeekClient(
             val body = runCatching { resp.body?.string() }.getOrNull().orEmpty()
             if (resp.isSuccessful) {
                 val models = runCatching {
-                    json.parseToJsonElement(body).jsonObject["data"]?.jsonArray
-                        ?.mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.content }
+                    val root = json.parseToJsonElement(body) as? JsonObject
+                    (root?.get("data") as? JsonArray)?.mapNotNull {
+                        ((it as? JsonObject)?.get("id") as? JsonPrimitive)?.content
+                    }
                 }.getOrNull().orEmpty()
                 var msg = "连接成功，可用模型：${models.joinToString("、").ifBlank { "(未返回列表)" }}"
                 runCatching {
@@ -243,10 +261,10 @@ class DeepSeekClient(
                     client().newCall(breq).execute().use { bresp ->
                         val bbody = bresp.body?.string().orEmpty()
                         if (bresp.isSuccessful) {
-                            val obj = json.parseToJsonElement(bbody).jsonObject
-                            val info = obj["balance_infos"]?.jsonArray?.firstOrNull()?.jsonObject
-                            val total = info?.get("total_balance")?.jsonPrimitive?.contentOrNull
-                            val currency = info?.get("currency")?.jsonPrimitive?.contentOrNull.orEmpty()
+                            val obj = json.parseToJsonElement(bbody) as? JsonObject
+                            val info = (obj?.get("balance_infos") as? JsonArray)?.firstOrNull() as? JsonObject
+                            val total = (info?.get("total_balance") as? JsonPrimitive)?.contentOrNull
+                            val currency = (info?.get("currency") as? JsonPrimitive)?.contentOrNull.orEmpty()
                             if (total != null) msg += "\n账户余额：$currency $total"
                         }
                     }
