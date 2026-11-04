@@ -9,7 +9,7 @@
 ![platform](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)
 ![kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
-![release](https://img.shields.io/badge/release-v1.5.2-2ea44f)
+![release](https://img.shields.io/badge/release-v1.5.3-2ea44f)
 ![size](https://img.shields.io/badge/APK-6.7%20MB-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-3da639)
 
