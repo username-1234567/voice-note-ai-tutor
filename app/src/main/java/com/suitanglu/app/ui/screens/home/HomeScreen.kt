@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
@@ -134,6 +135,8 @@ fun HomeScreen(
     val sections by vm.sections.collectAsState()
     val courses by vm.courses.collectAsState()
     val courseFilter by vm.courseFilter.collectAsState()
+    val reviewOnly by vm.reviewOnly.collectAsState()
+    val totalReview by vm.totalReview.collectAsState()
     val tipShown by vm.firstDeleteTipShown.collectAsState()
     val query by vm.searchQuery.collectAsState()
     val noRecordingsAtAll by vm.noRecordingsAtAll.collectAsState()
@@ -323,8 +326,9 @@ fun HomeScreen(
                 }
             }
 
-            // 课程筛选：只列出真正出现过的课程，避免空课程占位
-            if (courses.isNotEmpty()) {
+            // 课程筛选：只列出真正出现过的课程，避免空课程占位。
+            // 待复习入口放在"全部"后面：它跨课程，和课程筛选是叠加关系，不是二选一
+            if (courses.isNotEmpty() || totalReview > 0 || reviewOnly) {
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -339,6 +343,17 @@ fun HomeScreen(
                         dotColor = null,
                         onClick = { vm.setCourseFilter(null) },
                     )
+                    if (totalReview > 0 || reviewOnly) {
+                        // 已经在筛选态时必须保留：取消最后一条星标后计数归零，
+                        // 若此时把入口一起藏了，用户就卡在空列表里退不出来。
+                        // 不配圆点——这一排的圆点专门表示课程色
+                        CourseFilterChip(
+                            label = if (totalReview > 0) "待复习 $totalReview" else "待复习",
+                            selected = reviewOnly,
+                            dotColor = null,
+                            onClick = { vm.toggleReviewOnly() },
+                        )
+                    }
                     courses.forEach { course ->
                         val active = courseFilter == course
                         CourseFilterChip(
@@ -368,6 +383,23 @@ fun HomeScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     TextButton(onClick = { vm.setQuery("") }) { Text("清除搜索") }
+                }
+            } else if (sections.isEmpty() && reviewOnly) {
+                Column(
+                    Modifier.fillMaxSize().padding(32.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("没有待复习的标记", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "讲解生成完的标记会自动进待复习；全部看完就空了。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(onClick = { vm.toggleReviewOnly() }) { Text("看全部录音") }
                 }
             } else if (sections.isEmpty() && courseFilter != null) {
                 Column(
@@ -911,6 +943,23 @@ private fun TimelineRow(
                         contentDescription = "有标记待发送",
                         tint = pendingColor,
                         modifier = Modifier.size(12.dp),
+                    )
+                }
+                // 待复习：星星 + 条数。放在副标题后面而不是拼进字符串，
+                // 副标题一行放不下会被省略号吃掉，而"还剩几条没看"是不能被截断的信息
+                if (item.reviewCount > 0 && !audioDeleted) {
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        Icons.Outlined.StarBorder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Text(
+                        item.reviewCount.toString(),
+                        style = MaterialTheme.typography.labelSmall.tabularNumbers(),
+                        color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
             }

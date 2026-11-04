@@ -20,6 +20,8 @@ data class HomeItem(
     val markerTotal: Int,
     val markerSuccess: Int,
     val markerFailed: Int,
+    /** 这条录音里待复习的标记数（已并入别处的不算，它们在列表里本身是隐藏的） */
+    val reviewCount: Int,
     val subtitle: String,
     /** 小写化的可搜索文本：标题 + 课程名 + 标记文字 + AI 回复前 500 字 */
     val searchText: String,
@@ -52,6 +54,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                     markerTotal = ms.size,
                     markerSuccess = success,
                     markerFailed = failed,
+                    reviewCount = ms.count { it.needsReview && it.mergedInto == null },
                     subtitle = repo.recordingSubtitle(rec, ms),
                     searchText = buildString {
                         append(rec.title).append(' ')
@@ -83,6 +86,19 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     /** null = 全部；否则只显示该课程 */
     val courseFilter: StateFlow<String?> = _courseFilter
 
+    /** 只看有待复习标记的录音。和课程筛选、搜索是叠加关系，不是互斥 */
+    private val _reviewOnly = MutableStateFlow(false)
+    val reviewOnly: StateFlow<Boolean> = _reviewOnly
+
+    fun toggleReviewOnly() {
+        _reviewOnly.value = !_reviewOnly.value
+    }
+
+    /** 首页还有多少条标记没复习：顶部那个入口显不显示、显示几，全看它 */
+    val totalReview: StateFlow<Int> = allSections
+        .map { sections -> sections.sumOf { s -> s.items.sumOf { it.reviewCount } } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     private val courseFiltered: StateFlow<List<HomeSection>> =
         combine(allSections, _courseFilter) { sections, course ->
             if (course == null) {
@@ -110,18 +126,19 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val sections: StateFlow<List<HomeSection>> = combine(courseFiltered, _query) { sections, rawQuery ->
-        val needle = rawQuery.trim().lowercase()
-        if (needle.isEmpty()) {
-            sections
-        } else {
-            // 命中标题、课程名或任一标记的文字/讲解
+    val sections: StateFlow<List<HomeSection>> =
+        combine(courseFiltered, _reviewOnly, _query) { sections, reviewOnly, rawQuery ->
+            val needle = rawQuery.trim().lowercase()
+            // 三层筛选叠加：课程 → 待复习 → 关键词。放在一次组合里算，
+            // 免得串三条 StateFlow 时中途闪一下空列表
             sections.mapNotNull { section ->
-                val items = section.items.filter { it.searchText.contains(needle) }
+                val items = section.items.filter { item ->
+                    (!reviewOnly || item.reviewCount > 0) &&
+                        (needle.isEmpty() || item.searchText.contains(needle))
+                }
                 if (items.isEmpty()) null else section.copy(items = items)
             }
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun setCourseFilter(course: String?) {
         _courseFilter.value = course
