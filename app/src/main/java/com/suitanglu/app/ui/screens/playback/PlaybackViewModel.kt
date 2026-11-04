@@ -326,6 +326,18 @@ class PlaybackViewModel(app: Application, val recordingId: Long) : AndroidViewMo
         }
     }
 
+    // ===== 删除标记 =====
+
+    /**
+     * 删掉一条标记。未发送的也允许删——拍错了、讲重复了，凭什么非得先发一次 AI 才能清掉。
+     * 照片文件与轮次/日志由仓库一起清理。
+     */
+    fun deleteMarker(marker: Marker) {
+        container.appScope.launch {
+            container.recordingRepository.deleteMarker(marker.id)
+        }
+    }
+
     // ===== 整节汇总 =====
 
     val digest: StateFlow<RecordingDigest?> =

@@ -133,6 +133,10 @@ interface MarkerDao {
     @Query("DELETE FROM markers WHERE recordingId = :recordingId")
     suspend fun deleteByRecording(recordingId: Long)
 
+    /** 删单条标记：图片行、对话轮次、请求日志由调用方一并清理，这里只管标记本身 */
+    @Query("DELETE FROM markers WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
     @Query("UPDATE markers SET aiStatus = 'failed', aiError = '应用中断，未完成发送', updatedAt = :now WHERE aiStatus = 'sending'")
     suspend fun resetSending(now: Long)
 }
@@ -265,6 +269,10 @@ interface AiRequestLogDao {
 
     @Query("DELETE FROM ai_request_logs WHERE markerId IN (SELECT id FROM markers WHERE recordingId = :recordingId)")
     suspend fun deleteForRecording(recordingId: Long)
+
+    /** 删单条标记时跟着清：日志表按 markerId 引用，留下就是孤儿行 */
+    @Query("DELETE FROM ai_request_logs WHERE markerId = :markerId")
+    suspend fun deleteForMarker(markerId: Long)
 
     /**
      * 只保留最近 [keep] 条。

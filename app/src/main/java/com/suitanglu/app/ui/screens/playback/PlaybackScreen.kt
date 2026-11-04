@@ -57,6 +57,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.filled.Close
@@ -223,6 +224,8 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
     val mergeSel = remember { androidx.compose.runtime.mutableStateListOf<Long>() }
     // 非空表示正在编辑该标记的发送提示词
     var promptTarget by remember { mutableStateOf<Marker?>(null) }
+    // 非空表示正在确认删除该标记（未发送的也走这里）
+    var deleteMarkerTarget by remember { mutableStateOf<Marker?>(null) }
     var mergePromptOpen by remember { mutableStateOf(false) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -287,6 +290,28 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                 vm.saveCustomPrompt(target.id, prompt)
                 promptTarget = null
             },
+        )
+    }
+
+    deleteMarkerTarget?.let { target ->
+        val hasAnswer = target.aiStatus == Marker.AI_SUCCESS && !target.aiResponse.isNullOrBlank()
+        AppAlertDialog(
+            title = "删除这条标记",
+            message = if (hasAnswer) {
+                "照片、备注和已经生成的讲解都会一起删掉。这条的讲解已经花过钱，删除不会退费。"
+            } else {
+                "照片和备注会一起删掉。这条还没发送给 AI，不涉及费用。"
+            },
+            confirmLabel = "删除",
+            destructive = true,
+            showIcon = true,
+            onConfirm = {
+                vm.deleteMarker(target)
+                // 删的正好是展开着的那条：把展开态也清掉，否则下一个同名卡片会直接弹开
+                if (expandedMarkerId == target.id) expandedMarkerId = null
+                deleteMarkerTarget = null
+            },
+            onDismissRequest = { deleteMarkerTarget = null },
         )
     }
 
@@ -703,6 +728,7 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         }
                     },
                     onToggleReview = { vm.toggleReview(marker) },
+                    onDelete = { deleteMarkerTarget = marker },
                     costLabel = ModelPricing.format(
                         ModelPricing.costOf(turnsByMarker[marker.id].orEmpty(), aiModel),
                     ),
@@ -1409,6 +1435,8 @@ private fun MarkerCard(
     onEditImage: (MarkerImage) -> Unit,
     onSaveImage: (MarkerImage) -> Unit,
     onToggleReview: () -> Unit,
+    /** 删除这条标记：未发送的也能删，所以不挂在"发送状态"上 */
+    onDelete: () -> Unit,
     /** 这一条讲解花了多少钱；空串表示不展示（非 DeepSeek 端点或还没生成过） */
     costLabel: String,
     mergeMode: Boolean,
@@ -1521,6 +1549,24 @@ private fun MarkerCard(
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                // 删除：展开后才出现，避免折叠行上多一个危险按钮。
+                // 不按 aiStatus 禁掉——未发送的标记同样能删，那才是最想清掉的一类
+                if (expanded) {
+                    Box(
+                        Modifier
+                            .size(30.dp)
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable(onClickLabel = "删除这条标记", onClick = onDelete),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Outlined.DeleteOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp),
                         )
                     }

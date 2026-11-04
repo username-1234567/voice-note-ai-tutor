@@ -179,9 +179,26 @@ class RecordingRepository(
         db.recordingDao().delete(recordingId)
     }
 
+    /**
+     * 删除单条标记。
+     *
+     * 图片文件、图片行、对话轮次、AI 请求日志一起清掉——只删 markers 表那一行的话，
+     * 图片会永远留在 app 私有目录里（备份还会把孤儿图一起打包），
+     * 轮次和日志则会变成指向不存在标记的脏数据。
+     * 未发送的标记也走这条路径：它没有轮次和日志，删起来更干净。
+     */
+    suspend fun deleteMarker(markerId: Long) {
+        db.markerImageDao().getByMarker(markerId).forEach { img ->
+            File(img.filePath).takeIf { it.exists() }?.delete()
+        }
+        db.markerImageDao().deleteByMarker(markerId)
+        db.markerTurnDao().deleteByMarker(markerId)
+        db.aiRequestLogDao().deleteForMarker(markerId)
+        db.markerDao().deleteById(markerId)
+    }
+
     /** 仅删除录音文件，保留标记、图片、AI 回复 */
-    suspend fun deleteAudioOnly(recordingId: Long) {
-        val rec = db.recordingDao().getById(recordingId) ?: return
+    suspend fun deleteAudioOnly(recordingId: Long) {        val rec = db.recordingDao().getById(recordingId) ?: return
         File(rec.filePath).takeIf { it.exists() }?.delete()
         db.recordingDao().update(
             rec.copy(
