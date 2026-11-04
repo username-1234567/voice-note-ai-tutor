@@ -502,47 +502,22 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                                     )
                                 }
                             }
-                            SpeedButton(
-                                speed = speed,
-                                onClick = { showSpeedMenu = true },
-                                modifier = Modifier.align(Alignment.CenterEnd),
-                            )
-                            androidx.compose.material3.DropdownMenu(
-                                expanded = showSpeedMenu,
-                                onDismissRequest = { showSpeedMenu = false },
-                            ) {
-                                listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { v ->
-                                    // 当前倍速加勾：原来六项长得完全一样，选中的那个没有落点
-                                    androidx.compose.material3.DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                formatSpeed(v),
-                                                style = MaterialTheme.typography.bodyMedium.tabularNumbers(),
-                                                color = if (v == speed) {
-                                                    MaterialTheme.colorScheme.primary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurface
-                                                },
-                                            )
-                                        },
-                                        trailingIcon = if (v == speed) {
-                                            {
-                                                Icon(
-                                                    Icons.Filled.Check,
-                                                    contentDescription = "当前倍速",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(16.dp),
-                                                )
-                                            }
-                                        } else {
-                                            null
-                                        },
-                                        onClick = {
-                                            vm.setSpeed(v)
-                                            showSpeedMenu = false
-                                        },
-                                    )
-                                }
+                            // 菜单和按钮放同一个 Box：DropdownMenu 跟着锚点走，
+                            // 否则会贴在整行的左上角，离右侧的倍速键半个屏幕远
+                            Box(Modifier.align(Alignment.CenterEnd)) {
+                                SpeedButton(
+                                    speed = speed,
+                                    onClick = { showSpeedMenu = true },
+                                )
+                                SpeedMenu(
+                                    expanded = showSpeedMenu,
+                                    speed = speed,
+                                    onDismiss = { showSpeedMenu = false },
+                                    onSelect = {
+                                        vm.setSpeed(it)
+                                        showSpeedMenu = false
+                                    },
+                                )
                             }
                         }
                     }
@@ -788,7 +763,7 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                     playing = playing,
                     speed = speed,
                     onTogglePlay = { vm.togglePlay() },
-                    onSpeed = { showSpeedMenu = true },
+                    onSpeedChange = { vm.setSpeed(it) },
                     onSeek = { vm.seekTo(it) },
                     onExpand = { scope.launch { listState.animateScrollToItem(0) } },
                 )
@@ -2077,6 +2052,55 @@ private fun SpeedButton(
 }
 
 /**
+ * 倍速菜单。
+ * 必须挂在**触发它的那个按钮**上：之前顶部播放器和底部迷你条共用一个菜单，
+ * 菜单实体留在顶部播放器里，滚到下面时那块已被 LazyColumn 回收，
+ * 点迷你条的倍速键把状态置 true 也没东西可显示——看着就是"点了没反应"。
+ */
+@Composable
+private fun SpeedMenu(
+    expanded: Boolean,
+    speed: Float,
+    onDismiss: () -> Unit,
+    onSelect: (Float) -> Unit,
+) {
+    androidx.compose.material3.DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+    ) {
+        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { v ->
+            // 当前倍速加勾：原来六项长得完全一样，选中的那个没有落点
+            androidx.compose.material3.DropdownMenuItem(
+                text = {
+                    Text(
+                        formatSpeed(v),
+                        style = MaterialTheme.typography.bodyMedium.tabularNumbers(),
+                        color = if (v == speed) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                },
+                trailingIcon = if (v == speed) {
+                    {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = "当前倍速",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                } else {
+                    null
+                },
+                onClick = { onSelect(v) },
+            )
+        }
+    }
+}
+
+/**
  * 倍速文案：1.0 → "1×"，1.25 → "1.25×"。
  * 用真正的乘号（×）而不是小写字母 x——后者在中文字体里会掉到基线以下，看着像笔误。
  */
@@ -2189,11 +2213,12 @@ private fun MiniPlayer(
     playing: Boolean,
     speed: Float,
     onTogglePlay: () -> Unit,
-    onSpeed: () -> Unit,
+    onSpeedChange: (Float) -> Unit,
     onSeek: (Long) -> Unit,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var speedMenuOpen by remember { mutableStateOf(false) }
     // 不要再加 navigationBarsPadding()：外层 Box 的 Scaffold padding 已经让出了导航栏高度，
     // 两处都加会让这条播放器向上飘出一个导航栏的距离，底下的点击区还变成死区
     Column(
@@ -2255,7 +2280,24 @@ private fun MiniPlayer(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            SpeedButton(speed = speed, onClick = onSpeed, compact = true)
+            // 菜单锚在这个按钮自己身上：迷你条贴在屏幕底部，弹出的列表朝上展开，
+            // 不会顶出屏幕，也不用再借顶部播放器那个（此时已经被回收）
+            Box {
+                SpeedButton(
+                    speed = speed,
+                    onClick = { speedMenuOpen = true },
+                    compact = true,
+                )
+                SpeedMenu(
+                    expanded = speedMenuOpen,
+                    speed = speed,
+                    onDismiss = { speedMenuOpen = false },
+                    onSelect = {
+                        speedMenuOpen = false
+                        onSpeedChange(it)
+                    },
+                )
+            }
         }
     }
 }
