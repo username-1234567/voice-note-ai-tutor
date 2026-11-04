@@ -316,6 +316,9 @@ class AiSendManager(
             )
             if (turn.orderIndex == 0) {
                 db.markerDao().updateAi(marker.id, Marker.AI_SUCCESS, answer, null, t)
+                // 讲解刚生成完的这条，默认就进「待复习」：
+                // 刚听懂不等于记住了，这节课早晚要再翻一遍。用户可以自己点星取消。
+                db.markerDao().setNeedsReview(marker.id, true, t)
             }
             db.aiRequestLogDao().finish(logId, "success", answer.take(20000), null, t)
             return true
@@ -476,6 +479,8 @@ class AiSendManager(
                     ),
                 )
                 db.markerDao().updateAi(head.id, Marker.AI_SUCCESS, answer, null, t)
+                // 合并讲解同样算一次"讲完了"：组首进待复习（成员已并入，不单独占一条）
+                db.markerDao().setNeedsReview(head.id, true, t)
                 // 真正合并成一个：把成员的图片挪到组首标记下，成员记 mergedInto 指过来（列表里隐藏）。
                 // members 已按 offsetMs 排序，head 是"最早那张"、last 是"最晚那张"，
                 // 播放条据此画成 [head.offsetMs, last.offsetMs] 的区间，而不是几个散点。
