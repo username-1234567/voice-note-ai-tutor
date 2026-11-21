@@ -31,16 +31,18 @@ class AiPromptsTest {
             courseName = null,
             title = "第 1 讲",
             shots = listOf(
-                Shot(1_700_000_000_000, 10 * 60_000L),
-                Shot(1_700_000_300_000, 15 * 60_000L),
+                Shot(1_700_000_000_000, 10 * 60_000L, imageCount = 2),
+                Shot(1_700_000_300_000, 15 * 60_000L, imageCount = 1),
             ),
-            imageCount = 5,
+            imageCount = 3,
             notes = emptyList(),
             rangeEndOffsetMs = 15 * 60_000L,
         )
-        assertTrue(ctx.contains("第 1 处"))
-        assertTrue(ctx.contains("第 2 处"))
-        assertTrue(ctx.contains("共 5 张"))
+        // 图片序号要能对上具体那一处：第 1–2 张是第一处，第 3 张是第二处
+        assertTrue(ctx.contains("第 1–2 张"))
+        assertTrue(ctx.contains("第 3 张"))
+        assertTrue(ctx.contains("共 3 张"))
+        assertTrue(ctx.contains("合起来讲"))
         assertTrue(!ctx.contains("学生备注"))
     }
 

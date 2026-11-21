@@ -228,7 +228,7 @@ class AiSendManager(
         return AiPrompts.contextBlock(
             courseName = rec?.courseName,
             title = rec?.title.orEmpty(),
-            shots = listOf(Shot(marker.absoluteTime, marker.offsetMs)),
+            shots = listOf(Shot(marker.absoluteTime, marker.offsetMs, imageCount.coerceAtLeast(1))),
             imageCount = imageCount,
             notes = listOfNotNull(marker.userText),
             rangeEndOffsetMs = marker.mergedEndOffsetMs,
@@ -449,8 +449,10 @@ class AiSendManager(
             val members = markerIds.mapNotNull { db.markerDao().getById(it) }.sortedBy { it.offsetMs }
             if (members.size < 2) return false
             val head = members.first()
-            val images = members
-                .flatMap { db.markerImageDao().getByMarker(it.id) }
+            // 先按标记分组取一次：下面既要用扁平化的文件列表，也要用"这一处拍了几张"
+            val imagesByMarker = members.associateWith { db.markerImageDao().getByMarker(it.id) }
+            val images = imagesByMarker.values
+                .flatten()
                 .map { File(it.filePath) }
                 .filter { it.exists() }
                 .distinctBy { it.absolutePath }
@@ -478,7 +480,9 @@ class AiSendManager(
             val context = AiPrompts.contextBlock(
                 courseName = rec?.courseName,
                 title = rec?.title.orEmpty(),
-                shots = members.map { Shot(it.absoluteTime, it.offsetMs) },
+                shots = members.map {
+                    Shot(it.absoluteTime, it.offsetMs, imagesByMarker[it].orEmpty().size.coerceAtLeast(1))
+                },
                 imageCount = images.size,
                 notes = members.mapNotNull { it.userText?.takeIf { t -> t.isNotBlank() } },
                 rangeEndOffsetMs = members.last().offsetMs,

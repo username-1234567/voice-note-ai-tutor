@@ -24,8 +24,8 @@ data class TurnExtra(
 /** 拆分结果：answer 是要显示/存库的正文，extra 是附加块 */
 data class ParsedAnswer(val answer: String, val extra: TurnExtra?)
 
-/** 一张图在课堂里的位置 */
-data class Shot(val absoluteTime: Long, val offsetMs: Long)
+/** 一处拍摄：时间点 + 这一处拍了几张。合并讲解时要靠图片序号对应到具体位置 */
+data class Shot(val absoluteTime: Long, val offsetMs: Long, val imageCount: Int = 1)
 
 /**
  * 提示词都由这里出。
@@ -183,16 +183,28 @@ object AiPrompts {
 
         if (imageCount > 0) {
             sb.append("图片：共 ").append(imageCount).append(" 张，按拍摄顺序排列")
-            if (shots.size > 1) sb.append("，分别拍自下面几个时间点") else sb.append('\n')
             if (shots.size > 1) {
-                sb.append('\n')
-                shots.forEachIndexed { i, s ->
-                    sb.append("  第 ").append(i + 1).append(" 处 · ")
-                        .append(fmtClock(s.absoluteTime))
+                sb.append("，分别拍自下面几个时间点：\n")
+                // 按累计编号标出「第 1–2 张属于第一处」，模型才能说出
+                // 「第 3 张那个符号就是第 1 张里的 μ」这种跨图关系
+                var start = 1
+                shots.forEach { s ->
+                    val n = s.imageCount.coerceAtLeast(1)
+                    val end = start + n - 1
+                    sb.append("  ")
+                    if (n == 1) {
+                        sb.append("第 ").append(start).append(" 张")
+                    } else {
+                        sb.append("第 ").append(start).append("–").append(end).append(" 张")
+                    }
+                    sb.append(" · ").append(fmtClock(s.absoluteTime))
                         .append(" · 课堂第 ").append(fmtOffset(s.offsetMs)).append('\n')
+                    start = end + 1
                 }
                 sb.append("这些图很可能是同一处内容的连续记录：请合起来讲，指出它们之间的对应关系，")
                 sb.append("重复的部分只说一次；如果判断不出先后关系，先说明，不要硬拼。\n")
+            } else {
+                sb.append('\n')
             }
         }
 
