@@ -102,6 +102,9 @@ dependencies {
     implementation(libs.androidx.camera.view)
 
     implementation(libs.ucrop)
+    // 内嵌官方 chat-demo 静态页：WebViewAssetLoader 给它一个正常来源，
+    // 否则 file:// 下 IndexedDB/localStorage 与相对 chunk 都不可靠
+    implementation(libs.androidx.webkit)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)

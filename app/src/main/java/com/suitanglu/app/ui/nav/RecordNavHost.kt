@@ -19,6 +19,7 @@ import com.suitanglu.app.ui.theme.rememberReducedMotion
 import com.suitanglu.app.ui.screens.camera.InAppCameraScreen
 import com.suitanglu.app.ui.screens.chat.ChatListScreen
 import com.suitanglu.app.ui.screens.chat.ChatScreen
+import com.suitanglu.app.ui.screens.chat.ChatWebScreen
 import com.suitanglu.app.ui.screens.home.HomeScreen
 import com.suitanglu.app.ui.screens.onboarding.OnboardingGate
 import com.suitanglu.app.ui.screens.render.RenderScreen
@@ -43,6 +44,8 @@ object Routes {
     const val RENDER = "render"
     const val CHAT_LIST = "chats"
     const val CHAT = "chats/{sessionId}"
+    /** 首页顶部的对话入口：内嵌官方 chat-demo 静态页 */
+    const val CHAT_WEB = "chat/web"
 
     fun playback(id: Long) = "playback/$id"
     fun chat(sessionId: Long) = "chats/$sessionId"
@@ -118,7 +121,7 @@ fun RecordNavHost(
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                 onOpenRecording = { id -> nav.navigate(Routes.playback(id)) },
                 onOpenRecycle = { nav.navigate(Routes.RECYCLE) },
-                onOpenChat = { nav.navigate(Routes.CHAT_LIST) },
+                onOpenChat = { nav.navigate(Routes.CHAT_WEB) },
             )
         }
         composable(Routes.RECORDING) {
@@ -164,6 +167,9 @@ fun RecordNavHost(
         }
         composable(Routes.RENDER) {
             RenderScreen(onBack = { nav.popBackStack() })
+        }
+        composable(Routes.CHAT_WEB) {
+            ChatWebScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.CHAT_LIST) {
             ChatListScreen(

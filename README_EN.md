@@ -10,7 +10,7 @@
 ![kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
 ![release](https://img.shields.io/badge/release-v1.5.3-2ea44f)
-![size](https://img.shields.io/badge/APK-6.7%20MB-lightgrey)
+![size](https://img.shields.io/badge/APK-8.4%20MB-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-3da639)
 
 </div>
@@ -43,14 +43,16 @@ Recordings and photos stay on the device. Images are uploaded to your AI provide
 - Auto-pauses on incoming calls / audio focus loss and records the cut point
 - Warns once after 60s of silence (phone covered by a book, professor walked away)
 - Auto-names recordings from your timetable
-- Reminds you before class, with a lead time you set yourself (1–60 min)
+- Reminds you before class, with a lead time you set yourself (1–60 min) and a live countdown in the notification
 
 ### Markers
 
 - Short press: capture → crop → note. Long press: capture and save, no interruption
+- **Mark only** — drop a timestamp without a photo
 - Multiple photos per marker; review what you shot while still recording
 - Re-crop after class — the old explanation is invalidated and the marker returns to pending
-- "Needs review" star with a filtered view
+- Delete a marker (sent, failed or never sent) along with its photos and threads
+- Finished explanations land in **Needs review**; the home screen shows a review count per recording
 
 ### Viewing images
 
@@ -60,7 +62,9 @@ Recordings and photos stay on the device. Images are uploaded to your AI provide
 ### AI explanations
 
 - Each marker is a full conversation: follow-ups, prompt editing, regenerate, stop mid-stream
+- Editing or regenerating **keeps the old answer** — flip between versions with `‹ 1/2 ›`
 - **Merge several markers into one request** sharing a single explanation (a slide often takes 2–3 photos)
+- A merged group becomes **one marker**: photos side by side, and the progress bar draws a range instead of a dot
 - Per-marker custom prompts; whole-lecture digest (outline + glossary + three self-test questions)
 - Byte-stable request prefix to hit DeepSeek's context cache
 - Offline markdown-it + KaTeX rendering for formulas, tables and code
@@ -68,13 +72,15 @@ Recordings and photos stay on the device. Images are uploaded to your AI provide
 
 ### Direct chat
 
-- Ask anything or attach photos; the title is auto-generated after the first turn
+- Opened from the home header; embeds DeepSeek's official [chat-demo](https://github.com/deepseek-ai/chat-demo) (MIT): multiple conversations, deep thinking, web search, attachments, read-aloud, history import/export
+- Chat history lives in the WebView's local storage, separate from recordings and markers
 
 ### Library
 
 - Timeline home with search across titles, notes, AI answers and follow-ups
 - Recycle bin, batch selection, zip backup export/import (SHA-256 verified merge)
 - In-app update check
+- Indigo theme; four switchable app icons in Settings
 
 ## Quick start
 
@@ -104,7 +110,7 @@ Cost estimates appear only when the model name contains `deepseek`. For other mo
 
 Kotlin · Jetpack Compose (Material 3) · Room · ExoPlayer · CameraX · uCrop · OkHttp SSE · offline markdown-it + KaTeX in a WebView
 
-Schema is at v5, all upgraded through Room Migrations.
+Schema is at v7, all upgraded through Room Migrations.
 
 ## Docs
 

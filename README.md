@@ -10,7 +10,7 @@
 ![kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
 ![release](https://img.shields.io/badge/release-v1.5.3-2ea44f)
-![size](https://img.shields.io/badge/APK-6.7%20MB-lightgrey)
+![size](https://img.shields.io/badge/APK-8.4%20MB-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-3da639)
 
 </div>
@@ -43,14 +43,16 @@
 - 来电或音频焦点丢失自动暂停并记录，回放页能看到截断点
 - 连续一分钟没人说话提醒一次（老师走到后排、手机被书挡住）
 - 可按课程表自动命名：`{课程名}_{yyyyMMdd_HHmmss}.m4a`
-- 上课前按课程表提醒，提前几分钟自己填（1–60）
+- 上课前按课程表提醒，提前几分钟自己填（1–60），通知里带倒计时
 
 ### 标记
 
 - 短按：拍照 → 裁剪 → 写备注；长按：直接拍完入库，不打断听课
+- 也可以**只标记**：不拍照，抬手记一个时间点
 - 一个标记可挂多张图；录音途中能回看已拍的内容
 - 课后可以重新裁剪，旧讲解自动作废、退回待发送
-- 标记「待复习」（我还没弄懂），列表可只看星标
+- 标记可删：未发送、生成失败、已讲解的都能删，照片与对话一起清掉
+- 讲解生成完自动进「待复习」；首页有「待复习 N」入口，每条录音后面显示 ☆N
 
 ### 看图
 
@@ -60,7 +62,9 @@
 ### AI 讲解
 
 - 每个标记一轮完整对话：追问、编辑提示词、重新生成、中途停止
+- 编辑或重新生成**保留旧版**，用 `‹ 1/2 ›` 在历史回答之间切换
 - 多个标记可以**合并成一次请求**，共用一条讲解（拍一页课件常要分两三张）
+- 合并后真正**合成一条标记**：图片并排展示，播放条上从一个点变成一段区间
 - 每个标记可单独设提示词；整节课可汇编成「分点提纲 + 术语表 + 三个自测问题」
 - 请求前缀逐字节稳定，命中 DeepSeek 上下文缓存
 - 回答用离线 markdown-it + KaTeX 渲染，公式表格代码块都支持
@@ -68,13 +72,15 @@
 
 ### 直接对话
 
-- 首页进入，随手问或发图，首轮结束自动生成标题，会话可回看
+- 首页右上角进入，内置 DeepSeek 官方 [chat-demo](https://github.com/deepseek-ai/chat-demo)（MIT）：多会话、深度思考、联网搜索、附件、朗读、历史导入导出
+- 对话记录存在 WebView 的本地存储里，与录音、标记数据互不影响
 
 ### 整理
 
 - 首页时间轴 + 搜索（覆盖标题、课程名、标记备注、AI 回答与多轮追问）
 - 回收站、批量选择、zip 备份导入导出（SHA-256 校验合并）
 - 应用内检查更新
+- 靛蓝主题；设置页可切换 4 套应用图标
 
 ## 快速开始
 
@@ -104,7 +110,7 @@ Android Studio 直接打开根目录也可以。
 
 Kotlin · Jetpack Compose (Material 3) · Room · ExoPlayer · CameraX · uCrop · OkHttp SSE · WebView 内离线 markdown-it + KaTeX
 
-数据库已迭代到 v5，全部通过 Room Migration 升级。
+数据库已迭代到 v7，全部通过 Room Migration 升级。
 
 ## 文档
 
