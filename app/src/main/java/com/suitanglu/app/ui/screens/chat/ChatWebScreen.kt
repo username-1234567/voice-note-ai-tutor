@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.view.ViewGroup
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -31,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -42,11 +44,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewModelScope
 import androidx.webkit.WebViewAssetLoader
+import androidx.core.content.FileProvider
 import com.suitanglu.app.AppGraph
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.File
 
 /**
  * 用 DeepSeek 官方 chat-demo（静态站）替换首页顶部的对话入口。
@@ -60,6 +64,13 @@ private const val START_URL = "https://$DOMAIN/assets/chat/index.html"
 
 /** 首帧要用的配置：API Key 与是否开启深度思考，取自应用自己的设置 */
 data class ChatWebBoot(val apiKey: String, val thinking: Boolean)
+
+/**
+ * GetContent 只接受 MIME 型过滤条件：网页传来「image/*」这类就透传（相册只出图片），
+ * 传来扩展名清单（.pdf,.doc…，文件按钮的白名单）时退回 */*，格式校验由网页端再做。
+ */
+private fun fileChooserMime(params: WebChromeClient.FileChooserParams): String =
+    params.acceptTypes.firstOrNull { it.contains('/') } ?: "*/*"
 
 class ChatWebViewModel(app: Application) : AndroidViewModel(app) {
     private val container = AppGraph.get(app)
@@ -76,7 +87,7 @@ class ChatWebViewModel(app: Application) : AndroidViewModel(app) {
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun ChatWebScreen(onBack: () -> Unit) {
+fun ChatWebScreen(mode: String? = null, onBack: () -> Unit) {
     val context = LocalContext.current
     val vm: ChatWebViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val boot by vm.boot.collectAsState()
@@ -106,7 +117,30 @@ fun ChatWebScreen(onBack: () -> Unit) {
             fileCallback.value = null
         }
 
-    val assetLoader = remember(ready) {
+    // 网页里带 capture 的 <input type=file>（拍照）：调起系统相机把照片写进临时文件，
+    // 结果以 FileProvider uri 回给网页。文件名带 .jpg，网页端按扩展名白名单校验才能过。
+    val pendingCapture = remember { mutableStateOf<Uri?>(null) }
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val uri = pendingCapture.value
+        pendingCapture.value = null
+        fileCallback.value?.onReceiveValue(if (ok && uri != null) arrayOf(uri) else null)
+        fileCallback.value = null
+    }
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val uri = pendingCapture.value
+        if (!granted || uri == null) {
+            pendingCapture.value = null
+            fileCallback.value?.onReceiveValue(null)
+            fileCallback.value = null
+        } else {
+            // pendingCapture 留给 TakePicture 的回调清
+            takePicture.launch(uri)
+        }
+    }
+
+    val assetLoader = remember(ready, mode) {
         val rawAssets = WebViewAssetLoader.AssetsPathHandler(context)
         WebViewAssetLoader.Builder()
             .setDomain(DOMAIN)
@@ -114,7 +148,8 @@ fun ChatWebScreen(onBack: () -> Unit) {
                 "/assets/",
                 WebViewAssetLoader.PathHandler { path ->
                     if (path == "chat/index.html") {
-                        injectBoot(context, ready.apiKey, ready.thinking) ?: rawAssets.handle(path)
+                        injectBoot(context, ready.apiKey, ready.thinking, mode)
+                            ?: rawAssets.handle(path)
                     } else {
                         rawAssets.handle(path)
                     }
@@ -122,6 +157,10 @@ fun ChatWebScreen(onBack: () -> Unit) {
             )
             .build()
     }
+
+    // 网页里的「返回随堂录」按钮走这里回原生；用 rememberUpdatedState 是为了
+    // 避免 remember 捕获到首次组合时的旧 lambda
+    val backRef = rememberUpdatedState(onBack)
 
     val webView = remember {
         WebView(context).apply {
@@ -138,6 +177,18 @@ fun ChatWebScreen(onBack: () -> Unit) {
             settings.mediaPlaybackRequiresUserGesture = false
             isVerticalScrollBarEnabled = false
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+            // 只暴露一个 back()：网页侧边栏顶部的「返回随堂录」。JS 在后台线程回调，
+            // 必须 post 回主线程再导航
+            addJavascriptInterface(
+                object {
+                    @JavascriptInterface
+                    fun back() {
+                        post { backRef.value() }
+                    }
+                },
+                "Suitanglu",
+            )
 
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
@@ -170,10 +221,32 @@ fun ChatWebScreen(onBack: () -> Unit) {
                 ): Boolean {
                     fileCallback.value?.onReceiveValue(null)
                     fileCallback.value = callback
-                    val multiple = params.mode == FileChooserParams.MODE_OPEN_MULTIPLE
                     runCatching {
-                        if (multiple) pickMany.launch("*/*") else pickOne.launch("*/*")
+                        when {
+                            // 拍照入口：网页 input 带 capture。应用声明了 CAMERA 权限，
+                            // 未授权时调起相机 intent 会直接 SecurityException，先申请
+                            params.isCaptureEnabled -> {
+                                val dir = File(context.cacheDir, "chat").apply { mkdirs() }
+                                val file = File(dir, "camera-${System.currentTimeMillis()}.jpg")
+                                val uri = FileProvider.getUriForFile(
+                                    context, "${context.packageName}.fileprovider", file,
+                                )
+                                pendingCapture.value = uri
+                                if (ContextCompat.checkSelfPermission(
+                                        context, Manifest.permission.CAMERA,
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    takePicture.launch(uri)
+                                } else {
+                                    cameraPermission.launch(Manifest.permission.CAMERA)
+                                }
+                            }
+                            params.mode == FileChooserParams.MODE_OPEN_MULTIPLE ->
+                                pickMany.launch(fileChooserMime(params))
+                            else -> pickOne.launch(fileChooserMime(params))
+                        }
                     }.onFailure {
+                        pendingCapture.value = null
                         fileCallback.value = null
                         callback.onReceiveValue(null)
                     }
@@ -240,29 +313,43 @@ fun ChatWebScreen(onBack: () -> Unit) {
  * 在 index.html 的 <head> 里插一段启动脚本：把应用已保存的 Key、思考开关、语言
  * 直接写进 localStorage。demo 的设置模块在模块初始化时就读这些值，
  * 所以必须赶在 `defer` 的主脚本之前执行。
+ * mode 是入口属性（默认聊天 / 学术研讨），每次进入都覆盖：同一 WebView 页面
+ * 只承载一种模式的 System Prompt。
  */
 private fun injectBoot(
     context: android.content.Context,
     apiKey: String,
     thinking: Boolean,
+    mode: String?,
 ): WebResourceResponse? = runCatching {
     val html = context.assets.open("chat/index.html").bufferedReader().use { it.readText() }
+    // 存储命名空间跟着入口模式走（demo 的 storageNs.ts 同款规则）：
+    // 默认聊天与学术研讨的会话/附件/设置互不可见
+    val ns = if (mode == "seminar") "chat-demo-seminar" else "chat-demo"
     val script = buildString {
         append("<script>try{")
         if (apiKey.isNotBlank()) {
             // Key 由应用设置管理：每次进来都以应用里的为准，避免两边不一致
-            append("localStorage.setItem('chat-demo:api-key',")
+            append("localStorage.setItem('$ns:api-key',")
             append(JSONObject.quote(apiKey))
             append(");")
         }
         // 语言和思考开关只在第一次给默认值：用户在网页里改过就尊重网页里的选择
-        append("if(!localStorage.getItem('chat-demo:thinking'))")
-        append("localStorage.setItem('chat-demo:thinking','")
+        append("if(!localStorage.getItem('$ns:thinking'))")
+        append("localStorage.setItem('$ns:thinking','")
         append(if (thinking) "true" else "false")
         append("');")
         // demo 默认按浏览器语言猜，WebView 里常是 en-US，与应用的中文界面不一致
-        append("if(!localStorage.getItem('chat-demo:locale'))")
-        append("localStorage.setItem('chat-demo:locale','zh-CN');")
+        append("if(!localStorage.getItem('$ns:locale'))")
+        append("localStorage.setItem('$ns:locale','zh-CN');")
+        // 入口模式选择器：固定键名，非空即写入（目前只有 seminar），空则清掉回到默认身份
+        if (mode.isNullOrBlank()) {
+            append("localStorage.removeItem('chat-demo:mode');")
+        } else {
+            append("localStorage.setItem('chat-demo:mode',")
+            append(JSONObject.quote(mode))
+            append(");")
+        }
         append("}catch(e){}</script>")
     }
     val patched = html.replaceFirst("<head>", "<head>$script")

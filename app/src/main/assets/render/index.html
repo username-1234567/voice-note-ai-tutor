@@ -2,19 +2,26 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<!-- 放开 maximum-scale：正文随系统字号缩放（textZoom）后，用户还应能双指放大细看 -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="katex.min.css">
 <script src="markdown-it.min.js"></script>
 <script src="katex.min.js"></script>
 <style>
   html, body { margin: 0; padding: 0; background: transparent; overflow-x: hidden; }
   body {
-    font-family: -apple-system, "MiSans", "HarmonyOS Sans", "Noto Sans CJK SC", sans-serif;
+    /* 与原生正文同源：Roboto/MiSans/HarmonyOS 按厂商命中，-apple-system 是 iOS 专属、Android 永不命中 */
+    font-family: "MiSans", "HarmonyOS Sans", "Noto Sans CJK SC", sans-serif;
     font-size: 14px; line-height: 1.75; word-break: break-word; overflow-wrap: break-word;
     padding: 0 2px;
   }
-  body.dark { color: #E4E2DE; }
-  body.light { color: #3A3630; }
+  /* 正文色 = Theme.kt 的 onSurface（浅 #141A26 / 深 #E3E6EE，冷灰蓝）。
+     之前是 DeepSeek 观感的暖灰（#3A3630/#E4E2DE），和原生文字放在一起能看到两种"灰" */
+  body.dark { color: #E3E6EE; }
+  body.light { color: #141A26; }
+  /* 自测题的选项是「可点的链接」：原生侧接住 #opt:X，不真跳转 */
+  a { color: #3B5BA5; text-decoration: none; }
+  body.dark a { color: #AEC0F5; }
   p { margin: 0.4em 0; }
   h1, h2, h3, h4, h5, h6 { margin: 0.8em 0 0.4em; line-height: 1.4; }
   h1 { font-size: 1.32em; }
@@ -68,7 +75,10 @@ function extractMath(text) {
     math.push({ tex: tex, display: display });
     return '@@MATH' + (math.length - 1) + '@@';
   }
-  text = String(text || '')
+  // 模型有时把定界符写成 \\( \\)（双反斜杠）。markdown-it 会把 \\ 还原成一个 \，
+  // 于是 \( 变成普通文本、整段公式不渲染——自测题和追问建议里看到的就是这个。
+  // 先把「\\ 紧跟括号」并回单反斜杠，再走正常抽取。
+  text = String(text || '').replace(/\\\\([()\[\]])/g, '\\$1')
     .replace(/\$\$([\s\S]+?)\$\$/g, function(_, tex) { return store(tex, true); })
     .replace(/\\\[([\s\S]+?)\\\]/g, function(_, tex) { return store(tex, true); })
     .replace(/\\\(([\s\S]+?)\\\)/g, function(_, tex) { return store(tex, false); })
@@ -97,14 +107,14 @@ function restoreMath(html, math) {
   }).join('');
 }
 
-function render(text, dark, fold) {
+function render(text, dark, fold, streaming) {
   document.body.className = dark ? 'dark' : 'light';
   var ex = extractMath(text);
   var html = md.render(ex.text);
   html = restoreMath(html, ex.math);
   var content = document.getElementById('content');
   content.innerHTML = html;
-  if (fold) foldSections(content);
+  if (fold) foldSections(content, streaming === true);
   reportHeight();
   // 公式字体、图片都是异步撑开的：首帧量到的高度会偏小，
   // 只报这一次的话 WebView 就停在那个高度上，回答下半截直接被裁掉
@@ -117,12 +127,12 @@ function render(text, dark, fold) {
 /**
  * 把相邻两个 h2 之间的内容包成可折叠的一节。
  *
- * 只在最终回答上启用：流式渲染时文字还在长，中途折叠会让内容不断跳走。
- * 前两节默认展开（通常是"这页在讲什么"和"核心概念"），后面的推导按需点开。
+ * 各级标题默认全部收起（用户口径：正文默认不展开），点标题按需展开。
+ * streaming=true 时最后一节保持展开——它正在被写进来，收起就等于看不到当前内容；
+ * 结束时（streaming=false）把最后一节也收起。
  */
-function foldSections(root) {
+function foldSections(root, streaming) {
   var heads = root.querySelectorAll('h2');
-  if (heads.length < 3) return;
   for (var i = 0; i < heads.length; i++) {
     var h = heads[i];
     var body = document.createElement('div');
@@ -136,7 +146,8 @@ function foldSections(root) {
     if (!body.firstChild) continue;
     h.parentNode.insertBefore(body, h.nextSibling);
     h.classList.add('fold-head');
-    if (i >= 2) {
+    var keepOpen = streaming && i === heads.length - 1;
+    if (!keepOpen) {
       body.classList.add('is-collapsed');
       h.classList.add('is-collapsed');
     }
@@ -151,6 +162,30 @@ function foldSections(root) {
   }
 }
 window.render = render;
+
+// 自测选项：markdown 里写成 [A. xxx](#opt:A)，点一下把选项交给原生，
+// 由原生记账（选中/判对错），页面本身不跳转也不长状态
+document.addEventListener('click', function (e) {
+  var node = e.target;
+  while (node && node !== document.body) {
+    if (node.tagName === 'A') {
+      var href = node.getAttribute('href') || '';
+      if (href.indexOf('#opt:') === 0) {
+        e.preventDefault();
+        if (window.android && window.android.onOption) {
+          window.android.onOption(href.slice(5));
+        }
+      } else if (href.indexOf('#ask:') === 0) {
+        e.preventDefault();
+        if (window.android && window.android.onSuggestion) {
+          window.android.onSuggestion(href.slice(5));
+        }
+      }
+      return;
+    }
+    node = node.parentNode;
+  }
+});
 
 var lastReportedHeight = -1;
 function reportHeight() {

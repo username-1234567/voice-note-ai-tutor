@@ -171,7 +171,8 @@ class BackupManager(
                         val entry: ZipEntry = zip.nextEntry ?: break
                         if (!entry.isDirectory) {
                             val target = File(tempDir, entry.name).canonicalFile
-                            if (!target.path.startsWith(tempDir.canonicalPath)) continue // 防 zip 路径穿越
+                            // 必须带分隔符：否则 ../import_xxxY 这类落在兄弟目录的路径也能通过前缀比对
+                            if (!target.path.startsWith(tempDir.canonicalPath + File.separator)) continue // 防 zip 路径穿越
                             target.parentFile?.mkdirs()
                             target.outputStream().buffered().use { zip.copyTo(it) }
                         }

@@ -106,6 +106,7 @@ import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.service.RecordingBus
 import com.suitanglu.app.service.RecordingService
 import com.suitanglu.app.ui.theme.BrandAccent
+import com.suitanglu.app.ui.theme.rememberReducedMotion
 import com.suitanglu.app.ui.theme.tabularNumbers
 import java.io.File
 import kotlin.math.cos
@@ -143,6 +144,8 @@ fun RecordingScreen(
     var croppingSource by rememberSaveable { mutableStateOf<Uri?>(null) }
     // 这次拍照是不是"长按快拍"：是则跳过裁剪，直接入库
     var quickCapture by rememberSaveable { mutableStateOf(false) }
+    // 从标记弹层进了应用内相机：弹层挡不住整页路由必须先收起，回来时靠这个标志恢复它
+    var sheetToCamera by rememberSaveable { mutableStateOf(false) }
     // saveable：进程被杀恢复后为 true，不再自动重启录音（避免恢复出“一坏一好”两条录音）
     var attemptedStart by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
@@ -200,16 +203,28 @@ fun RecordingScreen(
                 quickCapture = false
                 vm.saveQuickMarker(uri) { reportQuickSave(it) }
             } else {
+                // 从标记弹层进的相机：弹层在进相机前被收起，回来先恢复再进裁剪，
+                // 否则拍完弹层是关的，用户以为标记框自己跑了
+                showMarkerSheet = true
+                sheetToCamera = false
                 cropLauncher.launch(uri to newCropUri(context))
             }
         } else if (quickCapture) {
             // 进了相机又退出来没拍：不清标志的话，下一次短按会被当成快拍
             quickCapture = false
+        } else if (sheetToCamera) {
+            // 不是快拍 = 从标记弹层进的相机，取消拍摄也要把弹层恢复回来
+            sheetToCamera = false
+            showMarkerSheet = true
         }
     }
 
     if (showMarkerStrip) {
-        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { showMarkerStrip = false }) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { showMarkerStrip = false },
+            // 标记一多列表就高过半屏：默认半开模式要手动上拉才能看全
+            sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
             Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
                 Text(
                     "这节课的标记（${markerStrip.size}）",
@@ -419,11 +434,12 @@ fun RecordingScreen(
                         )
                     }
                     Spacer(Modifier.height(6.dp))
-                    // 环的图例：不解释的话它就是一圈没来由的刻度
+                    // 环的图例：不解释的话它就是一圈没来由的刻度。
+                    // 弱化不用 alpha：0.8 透明度叠底色实测只有 3.92:1，低于 AA，直接用 token 本体
                     Text(
                         "最近 60 秒 · 每根条 1 秒，长度是那一秒的音量",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -613,11 +629,16 @@ fun RecordingScreen(
 
     // 标记编辑底部弹层
     if (showMarkerSheet) {
-        ModalBottomSheet(onDismissRequest = {
-            showMarkerSheet = false
-            markerText = "" // 未保存的文字备注不带入下一个标记
-            vm.discardPending() // 没保存的图片也一并丢掉
-        }) {
+        ModalBottomSheet(
+            onDismissRequest = {
+                showMarkerSheet = false
+                markerText = "" // 未保存的文字备注不带入下一个标记
+                vm.discardPending() // 没保存的图片也一并丢掉
+            },
+            // 内容（图片 + 备注 + 保存键）高过半屏：默认半开模式把保存按钮压到屏幕外，
+            // 必须手动上拉才看得见——直接全开
+            sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
             Column(
                 Modifier
                     .padding(start = 20.dp, end = 20.dp, bottom = 16.dp)
@@ -640,7 +661,9 @@ fun RecordingScreen(
                     Button(
                         onClick = {
                             if (general.cameraMode == CameraMode.IN_APP) {
+                                // 弹层挡不住整页相机路由，先收起；回来时靠 sheetToCamera 恢复
                                 showMarkerSheet = false
+                                sheetToCamera = true
                                 onOpenInAppCamera()
                             } else {
                                 croppingSource = newPhotoUri(context)
@@ -681,12 +704,24 @@ fun RecordingScreen(
                                     modifier = Modifier.fillMaxWidth().height(80.dp)
                                         .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)),
                                 )
+                                // 移除入口原来只有 24dp，还紧贴缩略图右上角：上课手湿时误删图片的高发点。
+                                // 视觉抬到 32dp、命中区拉满 48dp 并往角内收 8dp，与相邻缩略图的叉拉开距离
                                 IconButton(
                                     onClick = { vm.removePending(file) },
-                                    modifier = Modifier.align(Alignment.TopEnd).size(24.dp)
-                                        .background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                                    modifier = Modifier.align(Alignment.TopEnd).size(48.dp),
                                 ) {
-                                    Icon(Icons.Filled.Close, contentDescription = "移除", tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Box(
+                                        Modifier.size(32.dp)
+                                            .background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = "移除",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -887,17 +922,21 @@ private fun SoundPrintRing(
 /** 呼吸小圆点：录音中脉动，暂停/打断时静止 */
 @Composable
 private fun RecordingDot(color: Color, animated: Boolean) {
-    val alpha = if (animated) {
-        val pulse = rememberInfiniteTransition(label = "recDot")
-        val a by pulse.animateFloat(
-            initialValue = 0.35f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse),
-            label = "recDotAlpha",
-        )
-        a
-    } else {
-        0.9f
+    // 关动画（无障碍）时钉在呼吸终值不循环；录音状态由旁边文字表达，点纯装饰。
+    // 音量条与计时是数据本身，不在此列
+    val alpha = when {
+        !animated -> 0.9f
+        rememberReducedMotion() -> 1f
+        else -> {
+            val pulse = rememberInfiniteTransition(label = "recDot")
+            val a by pulse.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse),
+                label = "recDotAlpha",
+            )
+            a
+        }
     }
     Box(Modifier.size(6.dp).background(color.copy(alpha = alpha), CircleShape))
 }

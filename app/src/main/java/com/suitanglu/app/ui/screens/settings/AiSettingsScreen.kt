@@ -1,5 +1,7 @@
 package com.suitanglu.app.ui.screens.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -15,8 +17,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Launch
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.Button
@@ -37,13 +42,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.suitanglu.app.ai.AiPrompts
+import com.suitanglu.app.ai.isOfficialDeepSeekEndpoint
 import com.suitanglu.app.data.AiConfig
 import com.suitanglu.app.ui.components.BottomActionRow
 import com.suitanglu.app.ui.components.SecondaryPage
+import com.suitanglu.app.ui.theme.recordColors
 
 /** 思考强度四档；用列表驱动 UI，同时充当非法值的兜底白名单 */
 private val EFFORT_OPTIONS = listOf(
@@ -68,7 +80,7 @@ private val MODE_OPTIONS = listOf(
 )
 
 private fun styleHint(style: String): String = if (style == "math") {
-    "数学专业口径：先理解再推导，每个符号都解释，不跳步、不用「显然」带过。"
+    "数学专业口径：先理解再推导，每个符号都解释，不跳步、不用「显然」带过。官方端点下首页会显示学术研讨入口。"
 } else {
     "跨学科：按图片内容判断学科，数学重推导、文史重脉络、语言重用法。"
 }
@@ -80,6 +92,25 @@ private fun modeHint(mode: String): String = when (mode) {
     else -> "先讲这页在讲什么，再讲概念和推导，最后给例子和易错点。"
 }
 
+// ===== 数值字段的有效值兜底 =====
+// 原则：实际生效值必须永远可见——留空/超界时输入框旁边写明按什么值生效，
+// 失焦把生效值回填进框里，保存也按同一份生效值落库，三处口径一致。
+
+/** 超时有效范围 30–3600 秒：低于 30 会被请求层强制抬到 30，超过 1 小时的超时没有意义 */
+private const val TIMEOUT_MIN = 30
+private const val TIMEOUT_MAX = 3600
+
+private fun effectiveTimeoutSeconds(text: String): Int {
+    val n = text.toIntOrNull() ?: return 180
+    return n.coerceIn(TIMEOUT_MIN, TIMEOUT_MAX)
+}
+
+/** 最大输出 token：留空按 4096；0 = 不限制；1–255 会被请求层抬到 256 */
+private fun effectiveMaxTokens(text: String): Int {
+    val n = text.toIntOrNull() ?: return 4096
+    return if (n in 1..255) 256 else n
+}
+
 /** 二级页：AI 配置。表单较长，保存常驻底部，不用滚到底才能存 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -88,6 +119,7 @@ fun AiSettingsScreen(onBack: () -> Unit) {
     val ai by vm.aiConfig.collectAsState()
     val aiTestResult by vm.aiTestResult.collectAsState()
     val aiTesting by vm.aiTesting.collectAsState()
+    val context = LocalContext.current
 
     var apiKey by remember(ai.apiKey) { mutableStateOf(ai.apiKey) }
     var baseUrl by remember(ai.baseUrl) { mutableStateOf(ai.baseUrl) }
@@ -108,14 +140,16 @@ fun AiSettingsScreen(onBack: () -> Unit) {
     }
     var enrich by remember(ai.enrich) { mutableStateOf(ai.enrich) }
 
-    // 界面当前填写的配置：保存与测试连接共用，避免"测的是旧配置"
+    // 界面当前填写的配置：保存与测试连接共用，避免"测的是旧配置"。
+    // timeout/maxTokens 也按生效值落库：用户没失焦直接点保存时，框里显示的
+    // 与实际保存的仍是同一个数（提示文案、失焦回填用的是同一组函数）
     fun currentAiConfig(): AiConfig = ai.copy(
         apiKey = apiKey.trim(),
         baseUrl = baseUrl.trim(),
         model = model.trim(),
         stream = stream,
-        timeoutSeconds = timeout.toIntOrNull() ?: 180,
-        maxTokens = maxTokens.toIntOrNull() ?: 4096,
+        timeoutSeconds = effectiveTimeoutSeconds(timeout),
+        maxTokens = effectiveMaxTokens(maxTokens),
         prompt = prompt,
         promptStyle = promptStyle,
         explainMode = explainMode,
@@ -154,28 +188,82 @@ fun AiSettingsScreen(onBack: () -> Unit) {
         },
     ) {
         SettingsSection("连接") {
+            // 四个连接字段（key/地址/模型/流式）任一变化都清掉旧测试结果：
+            // 结果只对测试当时的那份配置有效，字段一动再展示就是误导
             OutlinedTextField(
-                value = apiKey, onValueChange = { apiKey = it },
+                value = apiKey,
+                onValueChange = {
+                    apiKey = it
+                    vm.clearAiTest()
+                },
                 label = { Text("API Key") },
                 placeholder = { Text("sk-…") },
+                // Key 是机器字符串：URL 键盘 + 关自动更正/自动大写，防 IME 把 sk- 改写成别的
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrectEnabled = false,
+                    keyboardType = KeyboardType.Uri,
+                ),
                 modifier = Modifier.fillMaxWidth(), singleLine = true,
             )
             OutlinedTextField(
-                value = baseUrl, onValueChange = { baseUrl = it },
+                value = baseUrl,
+                onValueChange = {
+                    baseUrl = it
+                    vm.clearAiTest()
+                },
                 label = { Text("接口地址") },
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrectEnabled = false,
+                    keyboardType = KeyboardType.Uri,
+                ),
                 modifier = Modifier.fillMaxWidth(), singleLine = true,
             )
+            // 官方接口时给出开放平台入口：用量、充值、建 Key 都在平台侧，应用内没有对应页面
+            if (isOfficialDeepSeekEndpoint(baseUrl)) {
+                TextButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse("https://platform.deepseek.com")),
+                        )
+                    },
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Launch,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "DeepSeek 开放平台：用量、充值与创建 API Key",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
             OutlinedTextField(
-                value = model, onValueChange = { model = it },
+                value = model,
+                onValueChange = {
+                    model = it
+                    vm.clearAiTest()
+                },
                 label = { Text("模型名称") },
-                supportingText = { Text("默认 deepseek-chat") },
+                supportingText = { Text("默认 deepseek-flash", style = MaterialTheme.typography.labelMedium) },
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrectEnabled = false,
+                    keyboardType = KeyboardType.Uri,
+                ),
                 modifier = Modifier.fillMaxWidth(), singleLine = true,
             )
             SwitchRow(
                 title = "流式输出",
                 subtitle = "回复边生成边显示，长回答不用等整段返回",
                 checked = stream,
-                onCheckedChange = { stream = it },
+                onCheckedChange = {
+                    stream = it
+                    vm.clearAiTest()
+                },
             )
             // 测试结果就地显示在连接区，而不是飘在按钮下方
             AnimatedVisibility(
@@ -185,12 +273,14 @@ fun AiSettingsScreen(onBack: () -> Unit) {
             ) {
                 aiTestResult?.let { result ->
                     val ok = !result.startsWith("失败")
+                    // 成功走语义 successContainer（与 StatusChip 同体系）；
+                    // 失败维持 errorContainer 半透明，不跟着改
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .background(
                                 if (ok) {
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                    MaterialTheme.recordColors.successContainer
                                 } else {
                                     MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)
                                 },
@@ -202,7 +292,11 @@ fun AiSettingsScreen(onBack: () -> Unit) {
                         Icon(
                             if (ok) Icons.Filled.CheckCircle else Icons.Filled.ErrorOutline,
                             contentDescription = null,
-                            tint = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            tint = if (ok) {
+                                MaterialTheme.recordColors.success
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            },
                             modifier = Modifier.size(18.dp).padding(top = 1.dp),
                         )
                         Spacer(Modifier.width(8.dp))
@@ -210,7 +304,7 @@ fun AiSettingsScreen(onBack: () -> Unit) {
                             result,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (ok) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
+                                MaterialTheme.recordColors.onSuccessContainer
                             } else {
                                 MaterialTheme.colorScheme.onErrorContainer
                             },
@@ -244,22 +338,68 @@ fun AiSettingsScreen(onBack: () -> Unit) {
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (!ai.baseUrl.contains("deepseek", ignoreCase = true)) {
+            // 判定与 DeepSeekClient 的 thinking 下发同源：isOfficialDeepSeekEndpoint（host 精确等于
+            // api.deepseek.com）。用编辑中的地址而非已保存配置——与上方开放平台入口实时联动
+            if (!isOfficialDeepSeekEndpoint(baseUrl)) {
                 Text(
-                    "当前接口不是 DeepSeek 官方地址，思考参数不会下发，此项不生效。",
+                    "思考参数只对官方端点（api.deepseek.com）下发；当前地址不是官方端点，此项不生效。",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
             }
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                // 留空/超界不再静默换值：提示写明生效值，失焦回填，保存也按同一生效值落库
+                var timeoutFocused by remember { mutableStateOf(false) }
                 OutlinedTextField(
-                    value = timeout, onValueChange = { timeout = it.filter { c -> c.isDigit() } },
-                    label = { Text("超时（秒）") }, modifier = Modifier.weight(1f), singleLine = true,
+                    value = timeout,
+                    onValueChange = { timeout = it.filter { c -> c.isDigit() } },
+                    label = { Text("超时（秒）") },
+                    supportingText = {
+                        when {
+                            timeout.isBlank() -> EffectiveHint("留空按 180 秒生效")
+                            timeout.toIntOrNull() != effectiveTimeoutSeconds(timeout) ->
+                                EffectiveHint("超出 $TIMEOUT_MIN–$TIMEOUT_MAX，按 ${effectiveTimeoutSeconds(timeout)} 秒生效")
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { state ->
+                            if (state.isFocused) {
+                                timeoutFocused = true
+                            } else if (timeoutFocused) {
+                                // 失焦回填生效值：框里显示的必须就是实际生效的
+                                timeoutFocused = false
+                                timeout = effectiveTimeoutSeconds(timeout).toString()
+                            }
+                        },
+                    singleLine = true,
                 )
+                var maxTokensFocused by remember { mutableStateOf(false) }
                 OutlinedTextField(
-                    value = maxTokens, onValueChange = { maxTokens = it.filter { c -> c.isDigit() } },
-                    label = { Text("最大输出 token") }, modifier = Modifier.weight(1f), singleLine = true,
+                    value = maxTokens,
+                    onValueChange = { maxTokens = it.filter { c -> c.isDigit() } },
+                    label = { Text("最大输出 token") },
+                    supportingText = {
+                        when {
+                            maxTokens.isBlank() -> EffectiveHint("留空按 4096 生效；填 0 表示不限制")
+                            maxTokens.toIntOrNull() != effectiveMaxTokens(maxTokens) ->
+                                EffectiveHint("小于 256 按 256 生效")
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { state ->
+                            if (state.isFocused) {
+                                maxTokensFocused = true
+                            } else if (maxTokensFocused) {
+                                maxTokensFocused = false
+                                maxTokens = effectiveMaxTokens(maxTokens).toString()
+                            }
+                        },
+                    singleLine = true,
                 )
             }
             Text(
@@ -316,7 +456,12 @@ fun AiSettingsScreen(onBack: () -> Unit) {
             OutlinedTextField(
                 value = prompt, onValueChange = { prompt = it },
                 label = { Text("提示词") },
-                supportingText = { Text("每次讲解都会带上；课程名、拍摄时间和备注由应用自动补充，不用写在这里") },
+                supportingText = {
+                    Text(
+                        "每次讲解都会带上；课程名、拍摄时间和备注由应用自动补充，不用写在这里",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(), minLines = 3,
             )
             // 默认提示词现在是一整段结构化任务，改坏了没法凭记忆敲回来
@@ -331,12 +476,22 @@ fun AiSettingsScreen(onBack: () -> Unit) {
         Text(
             "API Key 以明文保存在应用私有目录，导出的备份也会包含它。" +
                 "讲解时发送给 AI 的是：标记图片、课程名、拍摄时间、你的备注和这段提示词。",
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
         Spacer(Modifier.height(8.dp))
     }
+}
+
+/** 数值字段的有效值提示：留空/超界时写明实际按什么值生效（labelMedium，字段级说明口径） */
+@Composable
+private fun EffectiveHint(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** 开关行：标题 + 一句解释 + 右侧开关，整行可点 */
@@ -350,6 +505,12 @@ internal fun SwitchRow(
     Row(
         Modifier
             .fillMaxWidth()
+            // 整行走 toggleable：点文字说明也能拨开关；Switch 本体的回调置 null 防双触发
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -364,6 +525,6 @@ internal fun SwitchRow(
             }
         }
         Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }

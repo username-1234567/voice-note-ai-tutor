@@ -25,8 +25,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +41,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.requiredSizeIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -107,10 +110,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -119,6 +127,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -226,8 +235,8 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
     // 合并发送：选中的多个标记共用一次请求、一条讲解
     var mergeMode by remember { mutableStateOf(false) }
     val mergeSel = remember { androidx.compose.runtime.mutableStateListOf<Long>() }
-    // 非空表示正在编辑该标记的发送提示词
-    var promptTarget by remember { mutableStateOf<Marker?>(null) }
+    // 非空表示正在编辑该标记的备注（备注也是首轮对话里用户手写的那句话）
+    var noteTarget by remember { mutableStateOf<Marker?>(null) }
     // 非空表示正在确认删除该标记（未发送的也走这里）
     var deleteMarkerTarget by remember { mutableStateOf<Marker?>(null) }
     var mergePromptOpen by remember { mutableStateOf(false) }
@@ -284,15 +293,17 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
         )
     }
 
-    promptTarget?.let { target ->
+    noteTarget?.let { target ->
         PromptDialog(
-            title = "发送提示词",
-            hint = "只对这一个标记生效，会替换全局提示词；清空则恢复默认。",
-            initial = target.customPrompt.orEmpty(),
-            onDismiss = { promptTarget = null },
-            onConfirm = { prompt ->
-                vm.saveCustomPrompt(target.id, prompt)
-                promptTarget = null
+            title = "修改备注",
+            hint = "备注会随图片、课程名、拍摄时间一起作为「课堂上下文」发给 AI，" +
+                "用来判断你卡在哪；改完不会自动重新讲解。",
+            initial = target.userText.orEmpty(),
+            placeholder = "写点什么：老师说这里必考 / 这一步没跟上…",
+            onDismiss = { noteTarget = null },
+            onConfirm = { note ->
+                vm.saveNote(target.id, note)
+                noteTarget = null
             },
         )
     }
@@ -742,7 +753,7 @@ fun PlaybackScreen(recordingId: Long, onBack: () -> Unit) {
                         if (mergeSel.contains(marker.id)) mergeSel.remove(marker.id)
                         else mergeSel.add(marker.id)
                     },
-                    onEditPrompt = { promptTarget = marker },
+                    onEditNote = { noteTarget = marker },
                     onSelectVariantTurn = { turnId -> vm.selectVariant(marker.id, turnId) },
                     onSaveImage = { img ->
                         scope.launch {
@@ -1111,6 +1122,7 @@ private fun PromptDialog(
     initial: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
+    placeholder: String = "留空则不写",
 ) {
     var text by remember(initial) { mutableStateOf(initial) }
     AlertDialog(
@@ -1130,7 +1142,7 @@ private fun PromptDialog(
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 4,
                     maxLines = 8,
-                    placeholder = { Text("留空使用全局提示词") },
+                    placeholder = { Text(placeholder) },
                 )
             }
         },
@@ -1222,6 +1234,22 @@ fun MarkerProgressBar(
             // 60dp：轨道居中偏下，给上方"多标记"角标留出完整绘制空间
             // （52dp 时角标圆心在 2.8dp，圆被画布顶边裁掉一半）
             .height(60.dp)
+            // Canvas 是读屏的沉默区域：把身份读出来，并给等效于实体键的 seek 操作。
+            // 不加 liveRegion——进度每 200ms 刷新，主动播报会不停打断读屏
+            .semantics {
+                contentDescription =
+                    "录音进度条，已播放 ${Formatters.clockTime(positionMs)}，共 ${Formatters.clockTime(totalMs)}"
+                customActions = listOf(
+                    CustomAccessibilityAction("后退 10 秒") {
+                        onSeek((positionMs - SKIP_MS).coerceAtLeast(0L))
+                        true
+                    },
+                    CustomAccessibilityAction("前进 10 秒") {
+                        onSeek((positionMs + SKIP_MS).coerceAtMost(totalMs))
+                        true
+                    },
+                )
+            }
             // 拖动定位：先于 tap 挂载，横向移动超过阈值就由它接管，静止点击仍走 tap
             .pointerInput(totalMs) {
                 detectDragGestures(
@@ -1446,7 +1474,7 @@ private fun MarkerCard(
     mergeMode: Boolean,
     mergeSelected: Boolean,
     onToggleMerge: () -> Unit,
-    onEditPrompt: () -> Unit,
+    onEditNote: () -> Unit,
     onOpenMerged: () -> Unit,
     /** 切到某一轮的另一版（编辑/重新生成留下的历史版本） */
     onSelectVariantTurn: (Long) -> Unit,
@@ -1535,44 +1563,59 @@ private fun MarkerCard(
                 StatusChip(if (anySending) Marker.AI_SENDING else marker.aiStatus)
                 // 待复习：展开时始终可见（可以标），收起时只在已标记时显示（提醒）
                 if (expanded || marker.needsReview) {
+                    // 占位仍是 30dp，行高与图标位置不变；点击层 requiredSize 外扩到 48dp，
+                    // 溢出占位框的部分不占布局但照常参与命中（外层没有 clip，不会截掉）
                     Box(
-                        Modifier
-                            .size(30.dp)
-                            .clip(MaterialTheme.shapes.small)
-                            .clickable(
-                                onClickLabel = if (marker.needsReview) "取消待复习" else "标记为待复习",
-                                onClick = onToggleReview,
-                            ),
+                        Modifier.size(30.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            if (marker.needsReview) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                            contentDescription = null,
-                            tint = if (marker.needsReview) {
-                                MaterialTheme.colorScheme.tertiary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.size(16.dp),
-                        )
+                        Box(
+                            Modifier
+                                .requiredSize(48.dp)
+                                .clip(MaterialTheme.shapes.small)
+                                .clickable(
+                                    onClickLabel = if (marker.needsReview) "取消待复习" else "标记为待复习",
+                                    onClick = onToggleReview,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                if (marker.needsReview) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                contentDescription = null,
+                                tint = if (marker.needsReview) {
+                                    MaterialTheme.colorScheme.tertiary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
                 }
                 // 删除：展开后才出现，避免折叠行上多一个危险按钮。
                 // 不按 aiStatus 禁掉——未发送的标记同样能删，那才是最想清掉的一类
                 if (expanded) {
+                    // 星标和删除的命中区各向外扩 18dp 会互相叠住，垫开一段：
+                    // 图标之间的空隙变大一点，换来两个按钮都是完整的 48dp 命中
+                    Spacer(Modifier.width(18.dp))
                     Box(
-                        Modifier
-                            .size(30.dp)
-                            .clip(MaterialTheme.shapes.small)
-                            .clickable(onClickLabel = "删除这条标记", onClick = onDelete),
+                        Modifier.size(30.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            Icons.Outlined.DeleteOutline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp),
-                        )
+                        Box(
+                            Modifier
+                                .requiredSize(48.dp)
+                                .clip(MaterialTheme.shapes.small)
+                                .clickable(onClickLabel = "删除这条标记", onClick = onDelete),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Outlined.DeleteOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
                 }
                 Icon(
@@ -1668,12 +1711,15 @@ private fun MarkerCard(
                             }
                         }
                     }
-                    // 发送前就能改：钉住这条要 AI 怎么讲，而不是发送后再去改问题
+                    // 用户能改的只有备注——提示词是全局设置，不在单条标记上开口子
                     if (marker.mergedInto == null) {
-                        TextButton(onClick = onEditPrompt) {
+                        TextButton(onClick = onEditNote) {
                             Icon(Icons.Outlined.Edit, contentDescription = null, Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("发送提示词", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                if (marker.userText.isNullOrBlank()) "添加备注" else "修改备注",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
                         }
                     }
                 } else {
@@ -1689,9 +1735,16 @@ private fun MarkerCard(
                             onStopTurn = { onStopTurn(live.id) },
                             onRegenerate = { onRegenerateTurn(live.id) },
                             onEdit = {
-                                editingTurnId = live.id
-                                editDraft = live.question.orEmpty()
+                                // 首轮那句"提问"其实是任务提示词，不该让人在这里改；
+                                // 用户真正手写过的是备注，所以首轮点编辑就编辑备注
+                                if (live.orderIndex == 0) {
+                                    onEditNote()
+                                } else {
+                                    editingTurnId = live.id
+                                    editDraft = live.question.orEmpty()
+                                }
                             },
+                            note = marker.userText,
                             onPickSuggestion = { q -> followUpText = q },
                             canMarkReviewed = marker.needsReview,
                             onMarkReviewed = { if (marker.needsReview) onToggleReview() },
@@ -1871,6 +1924,8 @@ private fun TurnView(
     onStopTurn: () -> Unit,
     onRegenerate: () -> Unit,
     onEdit: () -> Unit,
+    /** 标记的备注：首轮气泡显示的是它，而不是任务提示词 */
+    note: String? = null,
     /** 点追问建议：填进输入框而不是直接发——误触一次就是一次真实计费 */
     onPickSuggestion: (String) -> Unit = {},
     /** 答对自测后可以顺手取消「待复习」；这条标记本身不在待复习时就不显示这个按钮 */
@@ -1896,7 +1951,7 @@ private fun TurnView(
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
                 Text(
-                    questionBubble(turn),
+                    questionBubble(turn, note),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -1909,65 +1964,102 @@ private fun TurnView(
         ) {
             if (variantTotal > 1) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "‹",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (variantIndex > 1) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.outlineVariant
-                        },
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable(enabled = variantIndex > 1) { onSelectVariant(variantIndex - 2) }
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
+                    // 命中区扩到 48dp：字形与到 "1/2" 的间距靠文字自己的 padding 保持不变，
+                    // 多出的命中面 ‹ 朝左伸进右对齐行的空白、› 朝右，不挤占别的控件
+                    Box(
+                        Modifier
+                            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(
+                                enabled = variantIndex > 1,
+                                onClickLabel = "上一版",
+                                onClick = { onSelectVariant(variantIndex - 2) },
+                            ),
+                        contentAlignment = Alignment.CenterEnd,
+                    ) {
+                        Text(
+                            "‹",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (variantIndex > 1) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
                     Text(
                         "$variantIndex/$variantTotal",
                         style = MaterialTheme.typography.labelMedium.tabularNumbers(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text(
-                        "›",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (variantIndex < variantTotal) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.outlineVariant
-                        },
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable(enabled = variantIndex < variantTotal) { onSelectVariant(variantIndex) }
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
+                    Box(
+                        Modifier
+                            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(
+                                enabled = variantIndex < variantTotal,
+                                onClickLabel = "下一版",
+                                onClick = { onSelectVariant(variantIndex) },
+                            ),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            "›",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (variantIndex < variantTotal) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
                 }
                 Spacer(Modifier.width(6.dp))
             }
             TextButton(onClick = onEdit) {
                 Icon(Icons.Filled.Edit, contentDescription = null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("编辑", style = MaterialTheme.typography.labelMedium)
+                // 本面板同型「小图标+文字」按钮统一 4dp 图标间隙（停止生成/重试/标记已复习同值）
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    if (turn.orderIndex == 0) "编辑备注" else "编辑",
+                    style = MaterialTheme.typography.labelMedium,
+                )
             }
         }
         Spacer(Modifier.height(6.dp))
         // 思考过程排在回答前面：thinking 模式下它是先到的，
         // 而且用户点开就是为了看"它是怎么想的"
         ReasoningBlock(turn = turn, streaming = streaming)
-        // 回答区
+        // 回答区。
+        // 流式与最终回答共用同一个 MarkdownView：拆成两个 when 分支的话，
+        // 生成结束那一刻整块会被当成新节点重建，WebView 重新加载会闪一次白。
+        val streamingNow = turn.status == MarkerTurn.TURN_SENDING && streaming != null
+        if (streamingNow || turn.status == MarkerTurn.TURN_SUCCESS) {
+            MarkdownView(
+                text = if (streamingNow) streaming?.text.orEmpty() else turn.answer.orEmpty(),
+                // 流式时也折叠：各级标题默认收起，只有正在写的最后一节保持展开；
+                // 生成结束把最后一节也收起。高度动画仍然只在结束后开
+                // （流式内容每 300ms 长一截，开着会一直追不上）
+                fold = true,
+                streaming = streamingNow,
+                animate = !streamingNow,
+            )
+        }
         when {
-            turn.status == MarkerTurn.TURN_SENDING && streaming != null -> {
-                Text(
-                    streaming.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            streamingNow -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     // 正文写完后要再花几秒产出追问和自测题，文字会停住；
                     // 不换句话，用户会以为卡死了
                     Text(
-                        if (streaming.enriching) "正文讲完了，正在整理追问与自测…" else "生成中…",
+                        if (streaming?.enriching == true) {
+                            "正文讲完了，正在整理追问与自测…"
+                        } else {
+                            "生成中…"
+                        },
                         style = MaterialTheme.typography.labelMedium,
                     )
                     Spacer(Modifier.width(8.dp))
@@ -1986,14 +2078,12 @@ private fun TurnView(
                 }
             }
             turn.status == MarkerTurn.TURN_SUCCESS -> {
-                // 最终回答按二级标题分节折叠：手机上先看结论，推导按需展开
-                MarkdownView(text = turn.answer.orEmpty(), fold = true)
                 Spacer(Modifier.height(2.dp))
                 UsageHint(turn)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = onRegenerate, enabled = turn.status != MarkerTurn.TURN_SENDING) {
                         Icon(Icons.Filled.Refresh, contentDescription = null, Modifier.size(14.dp))
-                        Spacer(Modifier.width(2.dp))
+                        Spacer(Modifier.width(4.dp))
                         Text("重新生成", style = MaterialTheme.typography.labelMedium)
                     }
                 }
@@ -2042,9 +2132,10 @@ private fun UsageHint(turn: MarkerTurn) {
         "length" -> hints.add("已达到最大输出长度被截断，可追问「继续」")
     }
     if (hints.isEmpty()) return
+    // token 用量是数字行：等宽让不同轮次之间的数字列对得上（DESIGN.md §3.3）
     Text(
         hints.joinToString("；"),
-        style = MaterialTheme.typography.labelMedium,
+        style = MaterialTheme.typography.labelMedium.tabularNumbers(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -2075,52 +2166,82 @@ private fun ReasoningBlock(turn: MarkerTurn, streaming: StreamingState?) {
             )
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
-        Row(
+        // 视觉行占位仍是一行文字的高度（图标略高于文字，溢出绘制不受影响），
+        // 点击层整行外扩到 48dp：块状背景不跟着长高，溢出占位的部分不占布局但参与命中
+        val titleRowHeight = maxOf(
+            with(LocalDensity.current) { MaterialTheme.typography.labelMedium.lineHeight.toDp() },
+            18.dp,
+        )
+        Box(
             Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded },
-            verticalAlignment = Alignment.CenterVertically,
+                .height(titleRowHeight),
+            contentAlignment = Alignment.Center,
         ) {
-            Text(
-                if (thinking) "思考过程 · 思考中…" else "思考过程",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.weight(1f))
-            Icon(
-                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = if (expanded) "收起思考过程" else "展开思考过程",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (thinking) "思考过程 · 思考中…" else "思考过程",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "收起思考过程" else "展开思考过程",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .requiredHeight(48.dp)
+                    .clickable(onClickLabel = if (expanded) "收起思考过程" else "展开思考过程") {
+                        expanded = !expanded
+                    },
             )
         }
         if (expanded) {
-            // 思考可能上万字，整段丢给 Text 会让每次刷新都重排一遍；
-            // 生成中只留最后一段（用户看的是"现在在想什么"），结束后才给全文
-            val shown = if (thinking && text.length > 4000) "…\n" + text.takeLast(4000) else text
+            // 思考里公式、列表和回答一样多，交给同一个渲染器；
+            // 用 Text 画出来的就是一堆 \begin{pmatrix}（真机上已确认过）
+            //
+            // 外面套一个 260dp 的窗口，内容超出就滚。滚动必须由 Compose 来做：
+            // WebView 在列表里抢不到竖向手势，让它自己滚就是纹丝不动（真机反馈）；
+            // 换成 Compose 的 scroll 后，它和外层列表是同一套手势，不会互相打架。
             val scroll = rememberScrollState()
-            // 思考阶段跟着最新一行走：固定高度里要是一直停在开头，等于看不到当前在想什么
-            LaunchedEffect(shown.length, thinking) {
-                if (thinking) scroll.scrollTo(scroll.maxValue)
+            // 窗口只有 260dp，思考时停在开头等于看不到"现在在想什么"，跟着最新一行走
+            LaunchedEffect(text.length, thinking) {
+                if (!thinking) return@LaunchedEffect
+                // 等这一帧排完再滚：否则拿到的是上一版的 maxValue，永远差一截
+                withFrameNanos { }
+                scroll.scrollTo(scroll.maxValue)
             }
-            Text(
-                shown,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
+            Box(
+                Modifier
                     .padding(top = 6.dp)
-                    .heightIn(max = 240.dp)
+                    .heightIn(max = 260.dp)
                     .verticalScroll(scroll),
-            )
+            ) {
+                MarkdownView(text = text, animate = false, touchable = false)
+            }
         }
     }
     Spacer(Modifier.height(8.dp))
 }
 
-/** 首轮存的是整段提示词（可能六行），气泡里只显示第一句；要看全文点「编辑」 */
-private fun questionBubble(turn: MarkerTurn): String {    val q = turn.question.orEmpty()
-    if (turn.orderIndex != 0) return q
-    return q.lineSequence().firstOrNull { it.isNotBlank() }?.take(60) ?: "（讲解这页内容）"
+/**
+ * 首轮气泡显示用户手写的备注，不显示任务提示词。
+ *
+ * 提示词是应用拼给模型的指令（六行那种），摆在对话里既不像人话、也没法改；
+ * 用户在首轮真正写下过的只有备注。没有备注就给一句中性描述，不假装他说过什么。
+ */
+private fun questionBubble(turn: MarkerTurn, note: String?): String {
+    if (turn.orderIndex != 0) return turn.question.orEmpty()
+    val text = note?.trim().orEmpty()
+    return text.ifEmpty { "（讲解这页内容）" }
 }
 
 private val extraJson = Json { ignoreUnknownKeys = true }
@@ -2130,40 +2251,28 @@ private fun parseTurnExtra(raw: String?): TurnExtra? {
     return runCatching { extraJson.decodeFromString(TurnExtra.serializer(), raw) }.getOrNull()
 }
 
+/** markdown 链接文本里的方括号必须转义：模型输出含 [ ] 时链接语法提前断掉，回传的字母/下标就错位；
+ * 同时杜绝用题干/建议文本自行拼出 [文字](链接) 的注入面 */
+private fun escapeMdLinkText(text: String): String =
+    text.replace("[", "\\[").replace("]", "\\]")
+
 /** AI 给的追问建议。点一下填进输入框，可改完再发——学生常常不是不想问，是不知道该问什么 */
 @Composable
 private fun FollowUpSuggestions(items: List<String>, onPick: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(
-            "继续追问 · 点一下填进输入框",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(4.dp))
-        items.forEach { q ->
-            Surface(
-                onClick = { onPick(q) },
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Text(
-                        "›",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(q, style = MaterialTheme.typography.bodySmall)
-                }
+    // 建议里经常带 \(...\)：用 Text 画就是一堆反斜杠。整块交给渲染器，
+    // 每条做成 #ask:下标 的链接，点击由渲染页回调原生
+    val markdown = remember(items) {
+        buildString {
+            append("**继续追问 · 点一下填进输入框**\n\n")
+            items.forEachIndexed { index, question ->
+                append("- [").append(escapeMdLinkText(question.trim())).append("](#ask:").append(index).append(")\n")
             }
         }
     }
+    MarkdownView(
+        text = markdown,
+        onSuggestion = { index -> items.getOrNull(index)?.let(onPick) },
+    )
 }
 
 /**
@@ -2177,6 +2286,10 @@ private fun QuizCard(
     onMarkReviewed: () -> Unit = {},
 ) {
     var picked by rememberSaveable(quiz.question) { mutableStateOf<String?>(null) }
+    // 题干和选项里经常带 \(x\) 这种公式，用 Text 画出来就是一堆反斜杠。
+    // 这里把整道题拼成一段 markdown，选项做成 #opt:X 链接，点击由渲染页回传原生，
+    // 一个 WebView 就能同时解决排版、公式和点击，不用每题开五个。
+    val markdown = remember(quiz, picked) { quizMarkdown(quiz, picked) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -2192,67 +2305,43 @@ private fun QuizCard(
             color = MaterialTheme.colorScheme.primary,
         )
         Spacer(Modifier.height(6.dp))
-        Text(quiz.question, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(8.dp))
-        quiz.options.forEach { opt ->
-            val letter = opt.trim().firstOrNull()?.uppercaseChar()?.toString().orEmpty()
-            val chosen = picked == letter
-            val isAnswer = letter == quiz.answer
-            val revealed = picked != null
-            val bg = when {
-                revealed && isAnswer -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                revealed && chosen -> MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
-                else -> Color.Transparent
-            }
-            Surface(
-                onClick = { if (picked == null) picked = letter },
-                shape = RoundedCornerShape(8.dp),
-                color = bg,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
-            ) {
-                Row(Modifier.padding(horizontal = 8.dp, vertical = 7.dp)) {
-                    Text(
-                        opt,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when {
-                            revealed && isAnswer -> MaterialTheme.colorScheme.primary
-                            revealed && chosen -> MaterialTheme.colorScheme.error
-                            else -> MaterialTheme.colorScheme.onSurface
-                        },
-                    )
-                }
+        MarkdownView(
+            text = markdown,
+            onOption = { letter -> if (picked == null) picked = letter },
+        )
+        // 答对不等于掌握了，所以不自动消星；但给一个一步到位的入口，
+        // 否则"自测"和"待复习"永远是两套互不相干的机制
+        if (picked == quiz.answer && canMarkReviewed) {
+            TextButton(onClick = onMarkReviewed) {
+                Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("标记为已复习", style = MaterialTheme.typography.labelMedium)
             }
         }
-        if (picked != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (picked == quiz.answer) "答对了" else "答案是 ${quiz.answer}",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (picked == quiz.answer) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
-            )
-            if (quiz.explain.isNotBlank()) {
-                Text(
-                    quiz.explain,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // 答对不等于掌握了，所以不自动消星；但给一个一步到位的入口，
-            // 否则"自测"和"待复习"永远是两套互不相干的机制
-            if (picked == quiz.answer && canMarkReviewed) {
-                TextButton(onClick = onMarkReviewed) {
-                    Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("标记为已复习", style = MaterialTheme.typography.labelMedium)
-                }
-            }
+    }
+}
+
+/** 自测题拼成一段 markdown：题干 + 可点选项 + 选完后追加对错与解析。
+ * 题干/选项/解析全部过 escapeMdLinkText：方括号转义既是功能修复（含 ] 的选项不再断链），
+ * 也防止模型在题干里自行拼出 markdown 链接 */
+private fun quizMarkdown(quiz: Quiz, picked: String?): String = buildString {
+    append(escapeMdLinkText(quiz.question.trim())).append("\n\n")
+    quiz.options.forEach { option ->
+        val letter = option.trim().firstOrNull()?.uppercaseChar()?.toString().orEmpty()
+        val mark = when {
+            picked == null -> ""
+            letter == quiz.answer -> " ✅"
+            letter == picked -> " ❌"
+            else -> ""
         }
+        append("- [").append(escapeMdLinkText(option.trim() + mark))
+            .append("](#opt:").append(letter).append(")\n")
+    }
+    if (picked != null) {
+        append('\n')
+        append(if (picked == quiz.answer) "**答对了**" else "**答案是 ${quiz.answer}**")
+        if (quiz.explain.isNotBlank()) append("\n\n").append(escapeMdLinkText(quiz.explain.trim()))
+        append('\n')
     }
 }
 
@@ -2288,7 +2377,8 @@ fun StatusChip(status: String) {    val extra = MaterialTheme.recordColors
 /**
  * 倍速按钮。
  * 倍速是"设置"不是"操作"，所以用低饱和胶囊、靠右放，不跟播放键争中间那个位置。
- * 46×40 的可点区域，视觉上仍是小胶囊；切换倍速时数字交叉淡入，而不是直接换一个字符串。
+ * 视觉仍是 46×40 的小胶囊；点击层外扩到 48dp，溢出胶囊的透明部分不占布局但参与命中，
+ * 所在行的高度不变。切换倍速时数字交叉淡入，而不是直接换一个字符串。
  */
 @Composable
 private fun SpeedButton(
@@ -2298,39 +2388,57 @@ private fun SpeedButton(
     compact: Boolean = false,
 ) {
     val source = remember { MutableInteractionSource() }
+    // 占位取胶囊的自然高度（大字体下跟着长），把它定死才能让 48dp 命中层
+    // 以"溢出"的方式扩展而不把行撑高
+    val capsuleHeight = maxOf(
+        40.dp,
+        with(LocalDensity.current) { MaterialTheme.typography.labelMedium.lineHeight.toDp() } + 18.dp,
+    )
     Box(
         modifier = modifier
             .pressFeedback(source, 0.94f)
-            .clip(MaterialTheme.shapes.small)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(
-                interactionSource = source,
-                indication = LocalIndication.current,
-                onClickLabel = "选择播放速度",
-                onClick = onClick,
-            )
-            .heightIn(min = 40.dp)
-            .widthIn(min = 46.dp)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .height(capsuleHeight),
         contentAlignment = Alignment.Center,
     ) {
-        AnimatedContent(
-            targetState = speed,
-            // 缺 SizeTransform 时容器尺寸会瞬跳（"1×" ↔ "1.25×" 宽度不同），
-            // 加上之后胶囊会在 130ms 内平滑变宽；clip=false 防止数字被裁
-            transitionSpec = {
-                (fadeIn(tween(130)) togetherWith fadeOut(tween(90)))
-                    .using(SizeTransform(clip = false))
-            },
+        Box(
+            Modifier
+                .clip(MaterialTheme.shapes.small)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .heightIn(min = 40.dp)
+                .widthIn(min = 46.dp)
+                .padding(horizontal = 12.dp, vertical = 9.dp),
             contentAlignment = Alignment.Center,
-            label = "speedValue",
-        ) { value ->
-            Text(
-                formatSpeed(value),
-                style = MaterialTheme.typography.labelMedium.tabularNumbers(),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+        ) {
+            AnimatedContent(
+                targetState = speed,
+                // 缺 SizeTransform 时容器尺寸会瞬跳（"1×" ↔ "1.25×" 宽度不同），
+                // 加上之后胶囊会在 130ms 内平滑变宽；clip=false 防止数字被裁
+                transitionSpec = {
+                    (fadeIn(tween(130)) togetherWith fadeOut(tween(90)))
+                        .using(SizeTransform(clip = false))
+                },
+                contentAlignment = Alignment.Center,
+                label = "speedValue",
+            ) { value ->
+                Text(
+                    formatSpeed(value),
+                    style = MaterialTheme.typography.labelMedium.tabularNumbers(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
+        // 点击层垫在视觉胶囊之上：命中 ≥48×48，ripple 形状沿用控件档的 10dp 圆角
+        Box(
+            Modifier
+                .requiredSizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                .clip(MaterialTheme.shapes.small)
+                .clickable(
+                    interactionSource = source,
+                    indication = LocalIndication.current,
+                    onClickLabel = "选择播放速度",
+                    onClick = onClick,
+                ),
+        )
     }
 }
 
@@ -2396,7 +2504,12 @@ private fun formatSpeed(value: Float): String {
     return "$text×"
 }
 
-/** 迷你条上的细进度条：带标记点、可点可拖。高度 16dp 只为手指服务，视觉上仍是 3dp 的线 */
+/**
+ * 迷你条上的细进度条：带标记点、可点可拖。
+ * 视觉上仍是 16dp 占位里的一条 3dp 细线；seek 命中层向下扩到 48dp，
+ * 与迷你条的内容行共享命中——行里的播放键/倍速键组合在后、命中优先级更高，不会被盖掉；
+ * 向上不越界，上面是列表，不能抢滚动。
+ */
 @Composable
 private fun MiniProgressBar(
     positionMs: Long,
@@ -2413,73 +2526,94 @@ private fun MiniProgressBar(
     val total = durationMs.coerceAtLeast(1)
     val fraction = (positionMs.toFloat() / total).coerceIn(0f, 1f)
 
-    Canvas(
+    Box(
         modifier
             .fillMaxWidth()
-            .height(16.dp)
-            .pointerInput(total) {
-                detectTapGestures { o ->
-                    onSeek(((o.x / size.width).coerceIn(0f, 1f) * total).toLong())
-                }
-            }
-            .pointerInput(total) {
-                detectHorizontalDragGestures { change, _ ->
-                    onSeek(((change.position.x / size.width).coerceIn(0f, 1f) * total).toLong())
-                }
-            },
+            .height(16.dp),
     ) {
-        val lineH = 3.dp.toPx()
-        val y = size.height / 2
-        drawRoundRect(
-            color = trackColor,
-            topLeft = Offset(0f, y - lineH / 2),
-            size = Size(size.width, lineH),
-            cornerRadius = CornerRadius(lineH / 2),
-        )
-        drawRoundRect(
-            color = playedColor,
-            topLeft = Offset(0f, y - lineH / 2),
-            size = Size(size.width * fraction, lineH),
-            cornerRadius = CornerRadius(lineH / 2),
-        )
-        // 合并成员不画点（已并入组首）；合并组首画成一段小横条
-        val standalone = markers.filter { it.mergedInto == null }
-        standalone.filter { it.mergedEndOffsetMs != null }.forEach { m ->
-            val end = m.mergedEndOffsetMs ?: m.offsetMs
-            val startFrac = (m.offsetMs.toFloat() / total).coerceIn(0f, 1f)
-            val endFrac = (end.toFloat() / total).coerceIn(startFrac, 1f)
-            val x0 = size.width * startFrac
-            val x1 = size.width * endFrac
-            val c = when (m.aiStatus) {
-                Marker.AI_SUCCESS -> extra.success
-                Marker.AI_FAILED -> failColor
-                else -> extra.pending
-            }
-            if (x1 - x0 > 1.dp.toPx()) {
-                drawRoundRect(
-                    color = c.copy(alpha = 0.35f),
-                    topLeft = Offset(x0, y - lineH),
-                    size = Size(x1 - x0, lineH * 2),
-                    cornerRadius = CornerRadius(lineH),
-                )
-            }
-            drawCircle(color = c, radius = 2.2.dp.toPx(), center = Offset(x0, y))
-        }
-        standalone.filter { it.mergedEndOffsetMs == null }.forEach { m ->
-            val x = (m.offsetMs.toFloat() / total).coerceIn(0f, 1f) * size.width
-            val c = when (m.aiStatus) {
-                Marker.AI_SUCCESS -> extra.success
-                Marker.AI_FAILED -> failColor
-                else -> extra.pending
-            }
-            // 先描一圈底色再画点：压在已播放部分上时不会糊成一片
-            drawCircle(
-                color = dotBorder,
-                radius = 3.2.dp.toPx(),
-                center = Offset(x, y),
+        Canvas(Modifier.fillMaxSize()) {
+            val lineH = 3.dp.toPx()
+            val y = size.height / 2
+            drawRoundRect(
+                color = trackColor,
+                topLeft = Offset(0f, y - lineH / 2),
+                size = Size(size.width, lineH),
+                cornerRadius = CornerRadius(lineH / 2),
             )
-            drawCircle(color = c, radius = 2.2.dp.toPx(), center = Offset(x, y))
+            drawRoundRect(
+                color = playedColor,
+                topLeft = Offset(0f, y - lineH / 2),
+                size = Size(size.width * fraction, lineH),
+                cornerRadius = CornerRadius(lineH / 2),
+            )
+            // 合并成员不画点（已并入组首）；合并组首画成一段小横条
+            val standalone = markers.filter { it.mergedInto == null }
+            standalone.filter { it.mergedEndOffsetMs != null }.forEach { m ->
+                val end = m.mergedEndOffsetMs ?: m.offsetMs
+                val startFrac = (m.offsetMs.toFloat() / total).coerceIn(0f, 1f)
+                val endFrac = (end.toFloat() / total).coerceIn(startFrac, 1f)
+                val x0 = size.width * startFrac
+                val x1 = size.width * endFrac
+                val c = when (m.aiStatus) {
+                    Marker.AI_SUCCESS -> extra.success
+                    Marker.AI_FAILED -> failColor
+                    else -> extra.pending
+                }
+                if (x1 - x0 > 1.dp.toPx()) {
+                    drawRoundRect(
+                        color = c.copy(alpha = 0.35f),
+                        topLeft = Offset(x0, y - lineH),
+                        size = Size(x1 - x0, lineH * 2),
+                        cornerRadius = CornerRadius(lineH),
+                    )
+                }
+                drawCircle(color = c, radius = 2.2.dp.toPx(), center = Offset(x0, y))
+            }
+            standalone.filter { it.mergedEndOffsetMs == null }.forEach { m ->
+                val x = (m.offsetMs.toFloat() / total).coerceIn(0f, 1f) * size.width
+                val c = when (m.aiStatus) {
+                    Marker.AI_SUCCESS -> extra.success
+                    Marker.AI_FAILED -> failColor
+                    else -> extra.pending
+                }
+                // 先描一圈底色再画点：压在已播放部分上时不会糊成一片
+                drawCircle(
+                    color = dotBorder,
+                    radius = 3.2.dp.toPx(),
+                    center = Offset(x, y),
+                )
+                drawCircle(color = c, radius = 2.2.dp.toPx(), center = Offset(x, y))
+            }
         }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .requiredHeight(48.dp)
+                // 迷你条的 seek 命中层同样是 Canvas 沉默区：语义与主进度条同口径
+                .semantics {
+                    contentDescription = "播放进度，可拖动定位"
+                    customActions = listOf(
+                        CustomAccessibilityAction("后退 10 秒") {
+                            onSeek((positionMs - SKIP_MS).coerceAtLeast(0L))
+                            true
+                        },
+                        CustomAccessibilityAction("前进 10 秒") {
+                            onSeek((positionMs + SKIP_MS).coerceAtMost(total))
+                            true
+                        },
+                    )
+                }
+                .pointerInput(total) {
+                    detectTapGestures { o ->
+                        onSeek(((o.x / size.width).coerceIn(0f, 1f) * total).toLong())
+                    }
+                }
+                .pointerInput(total) {
+                    detectHorizontalDragGestures { change, _ ->
+                        onSeek(((change.position.x / size.width).coerceIn(0f, 1f) * total).toLong())
+                    }
+                },
+        )
     }
 }
 
@@ -2523,30 +2657,50 @@ private fun MiniPlayer(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val miniPlaySource = remember { MutableInteractionSource() }
-            FilledIconButton(
-                onClick = onTogglePlay,
-                interactionSource = miniPlaySource,
-                modifier = Modifier
+            // 占位 40dp（迷你条行高不变）：视觉圆沿用 FilledIconButton 的默认样式
+            // （primary 实心圆 + onPrimary 图标），48dp 命中环溢出占位不占布局，
+            // 是唯一接点击的节点——点环、点圆都只触发一次
+            Box(
+                Modifier
                     .size(40.dp)
                     .pressFeedback(miniPlaySource, MotionSpec.PRESS_SCALE_ICON),
+                contentAlignment = Alignment.Center,
             ) {
-                AnimatedContent(
-                    targetState = playing,
-                    transitionSpec = {
-                        (fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.80f)) togetherWith
-                            (fadeOut(tween(100)) + scaleOut(tween(100), targetScale = 0.80f))
-                    },
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
                     contentAlignment = Alignment.Center,
-                    label = "miniPlayPause",
-                ) { isPlaying ->
-                    Icon(
-                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (isPlaying) "暂停" else "播放",
-                        modifier = Modifier
-                            .size(20.dp)
-                            .offset(x = if (isPlaying) 0.dp else 0.5.dp),
-                    )
+                ) {
+                    AnimatedContent(
+                        targetState = playing,
+                        transitionSpec = {
+                            (fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.80f)) togetherWith
+                                (fadeOut(tween(100)) + scaleOut(tween(100), targetScale = 0.80f))
+                        },
+                        contentAlignment = Alignment.Center,
+                        label = "miniPlayPause",
+                    ) { isPlaying ->
+                        Icon(
+                            if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (isPlaying) "暂停" else "播放",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .offset(x = if (isPlaying) 0.dp else 0.5.dp),
+                        )
+                    }
                 }
+                Box(
+                    Modifier
+                        .requiredSize(48.dp)
+                        .clickable(
+                            interactionSource = miniPlaySource,
+                            indication = LocalIndication.current,
+                            onClickLabel = "播放或暂停",
+                            onClick = onTogglePlay,
+                        ),
+                )
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {

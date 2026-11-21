@@ -15,13 +15,15 @@ class UCropContract : ActivityResultContract<Pair<Uri, Uri>, Uri?>() {
         val options = UCrop.Options().apply {
             setFreeStyleCropEnabled(true)
             setToolbarTitle("裁剪图片")
-            // 工具栏底色必须和标题/图标（白色）配套：默认浅色底会让白色按钮完全看不见
-            setToolbarColor(0xFF1B1B1B.toInt())
+            // 工具栏/状态栏用深色主题的 surface（#141821）、裁剪画布用 background（#0E1118）：
+            // 取同一套主题真值，不再用孤立的纯黑；工具栏保持深底浅字
+            setToolbarColor(0xFF141821.toInt())
             setToolbarWidgetColor(0xFFFFFFFF.toInt())
             // 实色状态栏：Android 15 强制 edge-to-edge 下透明色/相关调用会崩溃
-            setStatusBarColor(0xFF1B1B1B.toInt())
-            setRootViewBackgroundColor(0xFF1B1B1B.toInt())
-            setActiveControlsWidgetColor(0xFF1F8A73.toInt())
+            setStatusBarColor(0xFF141821.toInt())
+            setRootViewBackgroundColor(0xFF0E1118.toInt())
+            // 裁剪框角标/激活控件用主色真值（浅色 scheme 的 primary 靛蓝），替代旧品牌青绿
+            setActiveControlsWidgetColor(0xFF3B5BA5.toInt())
         }
         return UCrop.of(source, dest).withOptions(options).getIntent(context)
     }

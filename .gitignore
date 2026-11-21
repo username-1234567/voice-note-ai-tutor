@@ -9,5 +9,6 @@ captures/
 .cxx/
 *.apk
 *.aab
+.mimosa/
 # *.keystore  # 如不想提交签名密钥可恢复此行
 !debug.keystore

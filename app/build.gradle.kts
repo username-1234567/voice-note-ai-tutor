@@ -17,14 +17,14 @@ android {
         applicationId = "com.suitanglu.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.5.3"
+        versionCode = 16
+        versionName = "1.6.0"
     }
 
     signingConfigs {
         create("release") {
-            // 签名凭据不进仓库：从环境变量（CI）或 local.properties（本地）读取。
-            // 未配置时产出未签名包，由 CI 的 apksigner 步骤签名（含密钥轮换谱系）。
+            // 绛惧悕鍑嵁涓嶈繘浠撳簱锛氫粠鐜鍙橀噺锛圕I锛夋垨 local.properties锛堟湰鍦帮級璇诲彇銆?
+            // 鏈厤缃椂浜у嚭鏈鍚嶅寘锛岀敱 CI 鐨?apksigner 姝ラ绛惧悕锛堝惈瀵嗛挜杞崲璋辩郴锛夈€?
             val props = Properties()
             val lp = rootProject.file("local.properties")
             if (lp.exists()) lp.inputStream().use { props.load(it) }
@@ -102,8 +102,8 @@ dependencies {
     implementation(libs.androidx.camera.view)
 
     implementation(libs.ucrop)
-    // 内嵌官方 chat-demo 静态页：WebViewAssetLoader 给它一个正常来源，
-    // 否则 file:// 下 IndexedDB/localStorage 与相对 chunk 都不可靠
+    // 鍐呭祵瀹樻柟 chat-demo 闈欐€侀〉锛歐ebViewAssetLoader 缁欏畠涓€涓甯告潵婧愶紝
+    // 鍚﹀垯 file:// 涓?IndexedDB/localStorage 涓庣浉瀵?chunk 閮戒笉鍙潬
     implementation(libs.androidx.webkit)
 
     testImplementation(libs.junit)

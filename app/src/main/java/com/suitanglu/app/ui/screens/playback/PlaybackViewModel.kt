@@ -223,12 +223,17 @@ class PlaybackViewModel(app: Application, val recordingId: Long) : AndroidViewMo
         }
     }
 
-    /** 保存发送前的自定义提示词；传空则恢复使用全局提示词 */
-    fun saveCustomPrompt(markerId: Long, prompt: String) {
+    /**
+     * 保存标记备注。
+     *
+     * 备注不是给模型下指令的提示词，而是「我卡在哪」的线索：它随课程名、拍摄时间一起
+     * 作为课堂上下文发出。改完不自动重新生成——重新讲一次是要花钱的，由用户自己决定。
+     */
+    fun saveNote(markerId: Long, note: String) {
         container.appScope.launch {
-            container.db.markerDao().setCustomPrompt(
+            container.db.markerDao().setUserText(
                 markerId,
-                prompt.trim().takeIf { it.isNotEmpty() },
+                note.trim().takeIf { it.isNotEmpty() },
                 System.currentTimeMillis(),
             )
         }

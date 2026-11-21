@@ -3,14 +3,19 @@ package com.suitanglu.app.ui.screens.settings
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.suitanglu.app.AppGraph
 import com.suitanglu.app.data.AiConfig
 import com.suitanglu.app.data.GeneralConfig
+import com.suitanglu.app.data.Formatters
+import com.suitanglu.app.service.RecordingBus
+import com.suitanglu.app.update.InstallResult
 import com.suitanglu.app.update.UpdateCheckResult
 import com.suitanglu.app.update.UpdateInfo
+import com.suitanglu.app.update.UpdateInstaller
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -61,8 +66,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _backupProgress = MutableStateFlow<String?>(null)
     val backupProgress: StateFlow<String?> = _backupProgress
 
-    private val _backupResult = MutableStateFlow<String?>(null)
-    val backupResult: StateFlow<String?> = _backupResult
+    private val _backupResult = MutableStateFlow<BackupUiResult?>(null)
+    val backupResult: StateFlow<BackupUiResult?> = _backupResult
 
     private val _storageUsage = MutableStateFlow<Pair<Long, Long>?>(null)
     val storageUsage: StateFlow<Pair<Long, Long>?> = _storageUsage
@@ -109,8 +114,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         container.appScope.launch {
             val result = container.backupManager.exportTo(uri) { _backupProgress.value = it }
             _backupResult.value = result.fold(
-                onSuccess = { "导出完成，共 $it 个文件" },
-                onFailure = { "导出失败：${it.message}" },
+                onSuccess = { BackupUiResult.Success("导出完成，共 $it 个文件") },
+                onFailure = { BackupUiResult.Failure("导出失败：${it.message}") },
             )
             _backupProgress.value = null
         }
@@ -120,8 +125,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         container.appScope.launch {
             val result = container.backupManager.importFrom(uri) { _backupProgress.value = it }
             _backupResult.value = result.fold(
-                onSuccess = { it.message() },
-                onFailure = { "导入失败：${it.message}" },
+                onSuccess = { BackupUiResult.Success(it.message()) },
+                onFailure = { BackupUiResult.Failure("导入失败：${it.message}") },
             )
             _backupProgress.value = null
         }
@@ -137,14 +142,38 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 清理临时缓存：裁剪输出（crops）、拍摄原图（photos）、待发送暂存（pending）、
+     * 网页版拍照缓存（chat，ChatWebScreen 的 TakePicture 临时文件）。
+     *
+     * 录音会话进行中时，pending 里压着标记面板正在编辑的图片（RecordingViewModel
+     * 的 _pendingImages 指向这里），删掉会让正在编辑的照片失效——录音中整个目录跳过。
+     * 返回给界面的释放量按被删目录的实际字节数计算（storageUsage 只统计
+     * recordings/images 两个目录，不含 cache，用它的差值会永远是 0）。
+     */
     fun clearTempFiles() {
         viewModelScope.launch {
             val appDir = getApplication<Application>().cacheDir
-            File(appDir, "crops").deleteRecursively()
-            File(appDir, "photos").deleteRecursively()
-            File(appDir, "pending").deleteRecursively()
+            val recording = RecordingBus.state.value != null
+            val dirs = buildList {
+                add(File(appDir, "crops"))
+                add(File(appDir, "photos"))
+                add(File(appDir, "chat"))
+                if (!recording) add(File(appDir, "pending"))
+            }
+            val freed = dirs.sumOf { dir ->
+                val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                dir.deleteRecursively()
+                size
+            }
             refreshStorage()
-            _backupResult.value = "临时文件已清理"
+            _backupResult.value = BackupUiResult.Success(
+                if (recording) {
+                    "已释放 ${Formatters.bytes(freed)}；录音进行中，待发送暂存已保留"
+                } else {
+                    "临时文件已清理，释放 ${Formatters.bytes(freed)}"
+                },
+            )
         }
     }
 
@@ -174,13 +203,26 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 直达本应用的通知设置页（API 26+ 可用；minSdk 29，无需低版本回退分支） */
+    fun openNotificationSettings() {
+        val ctx = getApplication<Application>()
+        runCatching {
+            ctx.startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
     fun checkUpdate() {
         viewModelScope.launch {
             _updateState.value = UpdateUiState.Checking
             _updateState.value = when (val r = container.updateChecker.check()) {
                 is UpdateCheckResult.UpToDate -> UpdateUiState.UpToDate(r.current)
                 is UpdateCheckResult.Available -> UpdateUiState.Available(r.info)
-                is UpdateCheckResult.Error -> UpdateUiState.Error(r.message)
+                // 失败来源记进状态里：重试按钮按来源重发，而不是一律重新检查
+                is UpdateCheckResult.Error -> UpdateUiState.Error(r.message) { checkUpdate() }
             }
         }
     }
@@ -193,7 +235,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             }
             _updateState.value = result.fold(
                 onSuccess = { UpdateUiState.ReadyToInstall(it) },
-                onFailure = { UpdateUiState.Error("下载失败：${it.message}") },
+                // 记住失败来自下载：重试 = 用同一条版本信息重新下载
+                onFailure = { UpdateUiState.Error("下载失败：${it.message}") { downloadUpdate(info) } },
             )
         }
     }
@@ -203,12 +246,18 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         // 统一走 UpdateInstaller：它会在缺「安装未知应用」权限时跳授权页，
         // 而不是像原来那样直接 startActivity —— 那种情况下系统会静默拦下，
         // 用户看到的就是"点了没反应"
-        when (val result = com.suitanglu.app.update.UpdateInstaller.install(ctx, file)) {
-            is com.suitanglu.app.update.InstallResult.Started -> Unit
-            is com.suitanglu.app.update.InstallResult.NeedPermission ->
-                _updateState.value = UpdateUiState.Error("请先允许「安装未知应用」，返回后再点一次安装")
-            is com.suitanglu.app.update.InstallResult.Failed ->
-                _updateState.value = UpdateUiState.Error(result.message)
+        when (val result = UpdateInstaller.install(ctx, file)) {
+            is InstallResult.Started -> Unit
+            is InstallResult.NeedPermission ->
+                // 缺权限不再吃掉 ReadyToInstall 态：已下载的安装包还在，界面上方
+                // 提示去授权；授权回来直接重按「安装更新」，不用重新下载
+                _updateState.value = when (val cur = _updateState.value) {
+                    is UpdateUiState.ReadyToInstall -> cur.copy(needPermission = true)
+                    else -> cur
+                }
+            is InstallResult.Failed ->
+                // 记住失败来自安装：重试 = 对同一个文件重新拉起安装器
+                _updateState.value = UpdateUiState.Error(result.message) { installUpdate(file) }
         }
     }
 
@@ -223,6 +272,16 @@ sealed class UpdateUiState {
     data class UpToDate(val version: String) : UpdateUiState()
     data class Available(val info: UpdateInfo) : UpdateUiState()
     data class Downloading(val percent: Int) : UpdateUiState()
-    data class ReadyToInstall(val file: File) : UpdateUiState()
-    data class Error(val message: String) : UpdateUiState()
+
+    /** needPermission：缺「安装未知应用」权限、已跳授权页；文件保留，回来直接重按安装 */
+    data class ReadyToInstall(val file: File, val needPermission: Boolean = false) : UpdateUiState()
+
+    /** retry 记住失败来源：检查失败→重新检查、下载失败→重新下载、安装失败→重新安装 */
+    data class Error(val message: String, val retry: (() -> Unit)? = null) : UpdateUiState()
+}
+
+/** 导出/导入/清理的结果：成败用类型表达，UI 不再用字符串 contains 猜 */
+sealed class BackupUiResult {
+    data class Success(val message: String) : BackupUiResult()
+    data class Failure(val message: String) : BackupUiResult()
 }

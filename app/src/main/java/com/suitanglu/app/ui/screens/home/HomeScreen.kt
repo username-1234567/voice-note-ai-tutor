@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,6 +37,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MusicOff
@@ -90,12 +92,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.suitanglu.app.AppGraph
+import com.suitanglu.app.ai.AiPrompts
+import com.suitanglu.app.ai.isOfficialDeepSeekEndpoint
 import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.data.db.Recording
 import com.suitanglu.app.service.RecordingBus
@@ -123,6 +129,7 @@ fun HomeScreen(
     onRequestPermissions: () -> Unit,
     onStartRecording: () -> Unit,
     onOpenChat: () -> Unit,
+    onOpenSeminar: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecording: (Long) -> Unit,
     onOpenRecycle: () -> Unit,
@@ -162,6 +169,14 @@ fun HomeScreen(
         RecordingBus.state.map { it != null }.distinctUntilChanged()
     }.collectAsState(initial = RecordingBus.state.value != null)
     val recoveredCount by container.recordingRepository.recoveredCount.collectAsState()
+    // 学术研讨入口的显隐条件（硬门控，无放行）：官方端点 + 数学 Pro 风格。
+    // 内置网页版依赖官方的 /anthropic 兼容协议与联网搜索，且始终直连 api.deepseek.com——
+    // 中转的 Key 发过去只会 401，所以非官方端点一律不显示入口。
+    // aiConfig 为 null（还没读出来）时不显示，避免闪一下。
+    val aiConfig by container.settings.aiConfig.collectAsState(initial = null)
+    val seminarVisible = aiConfig?.let {
+        isOfficialDeepSeekEndpoint(it.baseUrl) && it.promptStyle == AiPrompts.STYLE_MATH
+    } == true
 
     LaunchedEffect(recoveredCount) {
         recoveredCount?.let {
@@ -172,6 +187,8 @@ fun HomeScreen(
 
     var pendingDelete by remember { mutableStateOf<Recording?>(null) }
     var pendingAudioOnly by remember { mutableStateOf<Recording?>(null) }
+    // 多选的「仅删音频」与单条同样不可恢复：批量一次毁掉 N 条音频，不能反而没有确认
+    var pendingAudioOnlyMany by remember { mutableStateOf<Set<Long>?>(null) }
     var renameTarget by remember { mutableStateOf<Recording?>(null) }
     var renameText by remember { mutableStateOf("") }
     var menuFor by remember { mutableStateOf<Recording?>(null) }
@@ -247,26 +264,47 @@ fun HomeScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            // 多选时收起：这时候页面在做"批量处理"，右下角再浮一个「开始录音」
-            // 既挡列表又抢注意力，还容易误触——它不属于当前这轮操作
-            if (!selectionMode) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        if (isRecording) {
-                            onStartRecording()
-                        } else if (hasNotificationPermission || android.os.Build.VERSION.SDK_INT < 33) {
-                            onStartRecording()
-                        } else {
-                            showNoPermissionHint = true
-                            onRequestPermissions()
-                        }
-                    },
-                    // 全页唯一的高饱和块：主操作必须最显眼
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text(if (isRecording) "返回录音中" else "开始录音") },
-                )
+            // 左下角学术研讨（条件可见）+ 右下角开始录音，同一行两端对齐。
+            // 多选时一起收起：页面在做"批量处理"，浮动按钮既挡列表又抢注意力，
+            // 还容易误触——它们不属于当前这轮操作
+            Row(
+                // Scaffold 的 FAB 槽按 end 对齐摆放、测量时不限宽：fillMaxWidth 的 Row 会被
+                // 整体左移一个槽位边距(16dp)。要两边各留 16dp，必须 start 补 32、end 归零——
+                // end 若照常写 16，右侧就变成 32dp，两个按钮不对称
+                Modifier.fillMaxWidth().padding(start = 32.dp, end = 0.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                if (seminarVisible && !selectionMode) {
+                    ExtendedFloatingActionButton(
+                        onClick = onOpenSeminar,
+                        // 次级容器色：右下角录音是全页唯一的高饱和块，研讨入口不能抢
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        icon = { Icon(Icons.Outlined.Forum, contentDescription = null) },
+                        text = { Text("学术研讨") },
+                    )
+                } else {
+                    Spacer(Modifier.width(1.dp))
+                }
+                if (!selectionMode) {
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            if (isRecording) {
+                                onStartRecording()
+                            } else if (hasNotificationPermission || android.os.Build.VERSION.SDK_INT < 33) {
+                                onStartRecording()
+                            } else {
+                                showNoPermissionHint = true
+                                onRequestPermissions()
+                            }
+                        },
+                        // 全页唯一的高饱和块：主操作必须最显眼
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                        text = { Text(if (isRecording) "返回录音中" else "开始录音") },
+                    )
+                }
             }
         },
     ) { padding ->
@@ -277,10 +315,8 @@ fun HomeScreen(
                     onExit = { exitSelection() },
                     onSelectAll = { selectedIds = allRecordingIds },
                     onDeleteAudioOnly = {
-                        vm.deleteAudioOnlyMany(selectedIds)
-                        val n = selectedIds.size
-                        exitSelection()
-                        scope.launch { snackbar.showSnackbar("已删除 $n 条录音的音频，标记与讲解保留") }
+                        // 不可恢复操作先确认，不直接执行（与单条入口同一口径）
+                        pendingAudioOnlyMany = selectedIds.toSet()
                     },
                     onDelete = {
                         vm.deleteToRecycleMany(selectedIds)
@@ -465,6 +501,11 @@ fun HomeScreen(
                                 menuVisible = menuFor?.id == item.recording.id,
                                 onDismissMenu = { menuFor = null },
                                 onMenuClick = { menuFor = item.recording },
+                                onEnterSelection = {
+                                    menuFor = null
+                                    selectionMode = true
+                                    selectedIds = selectedIds + item.recording.id
+                                },
                                 onRename = {
                                     renameTarget = item.recording
                                     renameText = item.recording.title
@@ -523,6 +564,25 @@ fun HomeScreen(
                 pendingAudioOnly = null
             },
             onDismissRequest = { pendingAudioOnly = null },
+        )
+    }
+
+    // 多选的仅删音频：同一不可恢复操作，批量前同样确认
+    pendingAudioOnlyMany?.let { ids ->
+        AppAlertDialog(
+            title = "仅删除录音文件",
+            message = "只删除已选 ${ids.size} 条录音的音频，标记、图片和 AI 讲解都会保留。此操作不可恢复。",
+            confirmLabel = "删除音频",
+            destructive = true,
+            showIcon = true,
+            onConfirm = {
+                vm.deleteAudioOnlyMany(ids)
+                val n = ids.size
+                exitSelection()
+                scope.launch { snackbar.showSnackbar("已删除 $n 条录音的音频，标记与讲解保留") }
+                pendingAudioOnlyMany = null
+            },
+            onDismissRequest = { pendingAudioOnlyMany = null },
         )
     }
 
@@ -604,7 +664,9 @@ private fun SearchRow(
                 Text(
                     "搜索课程、标题或标记文字",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    // 占位文字不用 alpha 弱化：0.7 叠底色实测只有 3.29:1，低于 AA 的 4.5:1，
+                    // 直接用 onSurfaceVariant 本体（6.17:1）
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             BasicTextField(
@@ -615,11 +677,16 @@ private fun SearchRow(
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                modifier = Modifier.fillMaxWidth(),
+                // 占位文字是独立节点，聚焦输入框时读屏读不到；把用途写进语义
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "搜索课程、标题或标记文字" },
             )
         }
         if (query.isNotEmpty()) {
-            IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(40.dp)) {
+            // 命中区强制 48dp：搜索条本身只有 42dp 高，普通 size 会被父容器约束压回去，
+            // M3 的最小触达兜底就落空了；视觉不变（按钮透明，只有图标可见）
+            IconButton(onClick = { onQueryChange("") }, modifier = Modifier.requiredSize(48.dp)) {
                 Icon(
                     Icons.Filled.Close,
                     contentDescription = "清除搜索",
@@ -628,7 +695,7 @@ private fun SearchRow(
                 )
             }
         }
-        IconButton(onClick = onPickDate, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = onPickDate, modifier = Modifier.requiredSize(48.dp)) {
             Icon(
                 Icons.Filled.CalendarMonth,
                 contentDescription = "按日期跳转",
@@ -818,6 +885,8 @@ private fun TimelineRow(
     menuVisible: Boolean,
     onDismissMenu: () -> Unit,
     onMenuClick: () -> Unit,
+    /** 菜单里的多选入口：与长按手势等效（手势无可见 affordance，读屏也难发现） */
+    onEnterSelection: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onDeleteAudioOnly: () -> Unit,
@@ -826,7 +895,9 @@ private fun TimelineRow(
     val rec = item.recording
     val isRecording = rec.status == Recording.STATUS_RECORDING
     val audioDeleted = rec.status == Recording.STATUS_AUDIO_DELETED
-    val nodeColor = courseColor(rec.courseName) ?: MaterialTheme.colorScheme.outline
+    // 无课程录音的节点不用 outline：#B4BAC8 对页面底色只有 1.82:1，非文本图形要求 3:1；
+    // onSurfaceVariant 与 coursePalette 各色明度档位接近，有课/无课两种行视觉重量才一致
+    val nodeColor = courseColor(rec.courseName) ?: MaterialTheme.colorScheme.onSurfaceVariant
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     val gapColor = MaterialTheme.colorScheme.background
     val shape = RoundedCornerShape(10.dp)
@@ -968,9 +1039,11 @@ private fun TimelineRow(
         // 更多操作
         if (!selectionMode) {
             Box(Modifier.width(40.dp).fillMaxHeight()) {
+                // 列行高只有 40dp 的列宽可用，requiredSize 才能把命中区撑回 48dp；
+                // 按钮透明，图标位置不变，只是误触概率降下来
                 IconButton(
                     onClick = onMenuClick,
-                    modifier = Modifier.align(Alignment.Center).size(40.dp),
+                    modifier = Modifier.align(Alignment.Center).requiredSize(48.dp),
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,
@@ -984,6 +1057,12 @@ private fun TimelineRow(
                         text = { Text("重命名") },
                         leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, null) },
                         onClick = onRename,
+                    )
+                    // 多选模式的可见入口：长按手势不可发现也不适合读屏，这里给等价的点击路径
+                    DropdownMenuItem(
+                        text = { Text("多选") },
+                        leadingIcon = { Icon(Icons.Filled.Checklist, null) },
+                        onClick = onEnterSelection,
                     )
                     DropdownMenuItem(
                         text = { Text("删除到回收站") },
@@ -1092,6 +1171,16 @@ private fun EmptyState() {
 /** 录制中的小红点（呼吸动画） */
 @Composable
 private fun RecordingPulseDot() {
+    // 装饰性动效接 reducedMotion：系统关动画时直接钉在呼吸终值（最醒目的一档）不循环；
+    // "录制中"另有副标题文字表达，红点纯装饰
+    if (rememberReducedMotion()) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .background(MaterialTheme.colorScheme.error, CircleShape),
+        )
+        return
+    }
     val pulse = rememberInfiniteTransition(label = "dot")
     val alpha by pulse.animateFloat(
         initialValue = 0.3f,
@@ -1119,13 +1208,18 @@ private fun courseColor(name: String?): Color? {
 private fun RecordingBanner(onClick: () -> Unit) {
     val state by RecordingBus.state.collectAsState()
     val s = state ?: return
-    val pulse = rememberInfiniteTransition(label = "pulse")
-    val dotAlpha by pulse.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse),
-        label = "dotAlpha",
-    )
+    // 呼吸点纯装饰（横幅文字已写明状态）：系统关动画时钉在呼吸终值，不起循环
+    val dotAlpha: Float = if (rememberReducedMotion()) {
+        1f
+    } else {
+        val pulse = rememberInfiniteTransition(label = "pulse")
+        pulse.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse),
+            label = "dotAlpha",
+        ).value
+    }
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),

@@ -96,8 +96,9 @@ interface MarkerDao {
     )
     suspend fun mergeInto(id: Long, headId: Long, status: String, now: Long)
 
-    @Query("UPDATE markers SET customPrompt = :prompt, updatedAt = :now WHERE id = :id")
-    suspend fun setCustomPrompt(id: Long, prompt: String?, now: Long)
+    /** 备注：随图片作为课堂上下文发给 AI，也是首轮对话里用户唯一手写的那句话 */
+    @Query("UPDATE markers SET userText = :text, updatedAt = :now WHERE id = :id")
+    suspend fun setUserText(id: Long, text: String?, now: Long)
 
     @Query("UPDATE markers SET mergedInto = NULL WHERE id = :id")
     suspend fun clearMerged(id: Long)

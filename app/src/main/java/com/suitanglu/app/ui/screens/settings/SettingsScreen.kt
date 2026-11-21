@@ -1,22 +1,6 @@
 package com.suitanglu.app.ui.screens.settings
 
-import android.os.Build
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
-import kotlinx.coroutines.delay
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.foundation.Image
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.clickable
-import com.suitanglu.app.R
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,32 +10,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.TextFormat
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.LargeTopAppBar
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -60,27 +35,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.suitanglu.app.data.CameraMode
+import com.suitanglu.app.data.Formatters
 import com.suitanglu.app.update.UpdateConfig
 
 /**
- * 设置首页 = 索引页：三项常用设置跳到二级页，其余就地配置。
- * 以前全挤在一页（API 表单 + 备份 + 存储 + 权限 + 更新），滚两屏找不到东西。
+ * 设置首页 = 索引页：只放跳转入口，不就地配置。
+ * 以前目录下面还挤着图标选择、提醒表单、相机、检查更新，一页滚两屏、语义混；
+ * 现在全部下沉到二级页，这里只留四组入口，每行副标题带一条状态摘要。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSchedule: () -> Unit,
     onOpenAi: () -> Unit,
     onOpenData: () -> Unit,
-    onOpenRender: () -> Unit,
+    onOpenRecording: () -> Unit,
+    onOpenAbout: () -> Unit,
 ) {
     val vm: SettingsViewModel = viewModel()
     val general by vm.generalConfig.collectAsState()
     val reminder by vm.reminderConfig.collectAsState()
-    val appIcon by vm.appIcon.collectAsState()
     val ai by vm.aiConfig.collectAsState()
-    val updateState by vm.updateState.collectAsState()
+    val storage by vm.storageUsage.collectAsState()
+
+    // 摘要跟着页面切换刷新：从「数据与存储」清完缓存回来，数字不至于停在旧值
+    LaunchedEffect(Unit) { vm.refreshStorage() }
 
     // 这里曾经挂过 exitUntilCollapsedScrollBehavior + nestedScroll，但顶栏是自绘的 Row，
     // 没有把 behavior 交给 TopAppBar，导致 heightOffsetLimit 一直是初值 NaN，
@@ -115,15 +94,7 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SettingsSection("常用", compact = true) {
-                SettingsEntry(
-                    title = "课程表",
-                    subtitle = "按星期几与时间段自动命名录音",
-                    icon = Icons.Outlined.CalendarMonth,
-                    tint = MaterialTheme.colorScheme.primary,
-                    onClick = onOpenSchedule,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            SettingsSection("AI 讲解", compact = true) {
                 SettingsEntry(
                     title = "AI 配置",
                     subtitle = if (ai.apiKey.isBlank()) "未填写 API Key" else "${ai.model} · 已配置",
@@ -131,205 +102,51 @@ fun SettingsScreen(
                     tint = MaterialTheme.colorScheme.tertiary,
                     onClick = onOpenAi,
                 )
+            }
+
+            SettingsSection("课堂", compact = true) {
+                SettingsEntry(
+                    title = "课程表与提醒",
+                    subtitle = if (reminder.first) {
+                        "按课程表命名录音，课前 ${reminder.second} 分钟提醒"
+                    } else {
+                        "按课程表命名录音；课前提醒未开启"
+                    },
+                    icon = Icons.Outlined.CalendarMonth,
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = onOpenSchedule,
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingsEntry(
+                    title = "录音与权限",
+                    subtitle = if (general.cameraMode == CameraMode.SYSTEM) "当前使用系统相机" else "当前使用应用内相机",
+                    icon = Icons.Outlined.Mic,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    onClick = onOpenRecording,
+                )
+            }
+
+            SettingsSection("数据", compact = true) {
+                // 动态摘要：VM init 已拉过 storageUsage；还没读出来（null）时回落到静态文案
+                val storageSubtitle = storage?.let { (rec, img) ->
+                    "已用 ${Formatters.bytes(rec + img)}；导出备份、导入与图片压缩"
+                } ?: "导出备份、导入、空间占用与图片压缩"
+                SettingsEntry(
                     title = "数据与存储",
-                    subtitle = "导出备份、导入、空间占用与图片压缩",
+                    subtitle = storageSubtitle,
                     icon = Icons.Outlined.FolderOpen,
                     tint = MaterialTheme.colorScheme.secondary,
                     onClick = onOpenData,
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+
+            SettingsSection("应用", compact = true) {
                 SettingsEntry(
-                    title = "渲染预览",
-                    subtitle = "把 Markdown/LaTeX 原文贴进来，看排版后的效果",
-                    icon = Icons.Outlined.TextFormat,
-                    tint = MaterialTheme.colorScheme.primary,
-                    onClick = onOpenRender,
-                )
-            }
-
-            SettingsSection("应用图标") {
-                Text(
-                    "部分系统需几秒刷新",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    com.suitanglu.app.util.AppIconManager.ALL.forEach { alias ->
-                        val selected = appIcon == alias
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { vm.saveAppIcon(alias) },
-                        ) {
-                            com.suitanglu.app.ui.components.IconPreview(
-                                alias = alias,
-                                modifier = Modifier
-                                    .size(58.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .border(
-                                        width = if (selected) 2.dp else 1.dp,
-                                        color = if (selected) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.outlineVariant,
-                                        shape = RoundedCornerShape(16.dp),
-                                    ),
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                com.suitanglu.app.util.AppIconManager.labelOf(alias),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (selected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-
-            SettingsSection("上课提醒") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("课前提醒", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            if (reminder.first) "提前 ${reminder.second} 分钟，按课程表排期"
-                            else "关闭",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = reminder.first,
-                        onCheckedChange = { vm.saveReminder(it, reminder.second) },
-                    )
-                }
-                if (reminder.first) {
-                    // 自己输入而不是选固定档：有人要 3 分钟（走到教室），有人要 30 分钟（先预习）
-                    var leadText by rememberSaveable(reminder.second) {
-                        mutableStateOf(reminder.second.toString())
-                    }
-                    LaunchedEffect(leadText) {
-                        val v = leadText.toIntOrNull() ?: return@LaunchedEffect
-                        if (v in 1..60 && v != reminder.second) {
-                            // 停手 500ms 再落库：连续敲两位数不会触发两次重排闹钟
-                            delay(500)
-                            vm.saveReminder(true, v)
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("提前", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.width(10.dp))
-                        // 单位放输入框外面，不用 suffix：
-                        // suffix 是紧跟在输入文字后面的，框又固定 150dp 宽，
-                        // 于是「5」后面空一大截、「分钟」也不贴右边缘，看着像没对齐
-                        OutlinedTextField(
-                            value = leadText,
-                            onValueChange = { raw ->
-                                leadText = raw.filter { it.isDigit() }.take(2)
-                            },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.width(88.dp),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text("分钟", style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Text(
-                        "1–60 分钟。只对配置了课程名的时段生效，周末不提醒；系统省电策略可能让通知稍晚几分钟。" +
-                            "小米/Redmi 还要在系统通知管理里打开「悬浮通知」，否则提醒只静默进通知栏。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            SettingsSection("录音设置") {
-                Text("相机", style = MaterialTheme.typography.bodyLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = general.cameraMode == CameraMode.SYSTEM,
-                        onClick = { vm.saveGeneral(general.copy(cameraMode = CameraMode.SYSTEM)) },
-                        label = { Text("系统相机") },
-                    )
-                    FilterChip(
-                        selected = general.cameraMode == CameraMode.IN_APP,
-                        onClick = { vm.saveGeneral(general.copy(cameraMode = CameraMode.IN_APP)) },
-                        label = { Text("应用内相机") },
-                    )
-                }
-                Text(
-                    "系统相机兼容性好；若录音中调用系统相机导致录音中断，请切换为应用内相机。",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text("权限与保活", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "为防止录音被系统杀死，建议忽略电池优化并允许后台运行。",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { vm.requestIgnoreBatteryOptimization() }) { Text("忽略电池优化") }
-                    OutlinedButton(onClick = { vm.openAppWhitelistSettings() }) { Text("应用详情设置") }
-                }
-                if (Build.VERSION.SDK_INT >= 33) {
-                    Text(
-                        "通知权限用于显示录音常驻通知，若未允许请在系统设置中开启。",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            SettingsSection("应用") {
-                Text(
-                    "随堂录 v${UpdateConfig.CURRENT_VERSION}",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                when (val s = updateState) {
-                    is UpdateUiState.Idle -> OutlinedButton(onClick = { vm.checkUpdate() }) { Text("检查更新") }
-                    UpdateUiState.Checking -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.width(16.dp).height(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("正在检查更新…")
-                    }
-                    is UpdateUiState.UpToDate -> {
-                        Text("已是最新版本 v${s.version}", color = MaterialTheme.colorScheme.primary)
-                        TextButton(onClick = { vm.checkUpdate() }) { Text("再次检查") }
-                    }
-                    is UpdateUiState.Available -> {
-                        Text(
-                            "发现新版本 ${s.info.version}（${s.info.releaseName}）",
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        if (s.info.changelog.isNotBlank()) {
-                            Text(s.info.changelog, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { vm.downloadUpdate(s.info) }) { Text("下载并安装") }
-                            TextButton(onClick = { vm.resetUpdateState() }) { Text("忽略") }
-                        }
-                    }
-                    is UpdateUiState.Downloading -> {
-                        Text("下载中 ${s.percent}%")
-                        LinearProgressIndicator(
-                            progress = { s.percent / 100f },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    is UpdateUiState.ReadyToInstall -> {
-                        Text("下载完成，点击安装", color = MaterialTheme.colorScheme.primary)
-                        Button(onClick = { vm.installUpdate(s.file) }) { Text("安装 APK") }
-                    }
-                    is UpdateUiState.Error -> {
-                        Text(s.message, color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { vm.checkUpdate() }) { Text("重试") }
-                    }
-                }
-                Text(
-                    "所有数据（录音、图片、AI 回复）保存在应用私有目录，卸载应用会全部删除，请定期在「数据与存储」中导出备份。",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    title = "外观与关于",
+                    subtitle = "随堂录 v${UpdateConfig.CURRENT_VERSION} · 图标、更新与数据说明",
+                    icon = Icons.Outlined.Info,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    onClick = onOpenAbout,
                 )
             }
             Spacer(Modifier.height(24.dp))

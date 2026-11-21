@@ -3,8 +3,8 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
-        <!-- 与 Compose 的 background 一致，避免启动时白闪 -->
-        <item name="android:windowBackground">#FFF5F7F6</item>
+        <!-- 与 Compose 的 background（#F6F7FB 蓝灰）一致，避免启动时白闪 -->
+        <item name="android:windowBackground">#FFF6F7FB</item>
     </style>
 
     <!-- uCrop 的 UCropActivity 是 AppCompatActivity，必须用 AppCompat 系主题，
@@ -12,7 +12,8 @@
          全屏隐藏状态栏：uCrop 工具栏顶到屏幕最上方，确认按钮不被状态栏遮挡 -->
     <style name="Theme.UCrop.Fix" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:windowFullscreen">true</item>
-        <item name="android:statusBarColor">#FF1B1B1B</item>
+        <!-- 与 UCropContract 里设置的工具栏色（深色 surface #141821）保持一致 -->
+        <item name="android:statusBarColor">#FF141821</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

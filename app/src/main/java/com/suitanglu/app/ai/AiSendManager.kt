@@ -281,7 +281,9 @@ class AiSendManager(
         if (current.orderIndex == 0 && current.question.isNullOrBlank()) {
             // 首轮问题只存"要 AI 怎么讲"。课程、时间、备注这些改由 contextFor 在发送时现拼，
             // 存进 question 会让气泡变成一大段机器文本，编辑时也难以下手
-            val basePrompt = marker.customPrompt?.takeIf { it.isNotBlank() } ?: ai.prompt
+            // 旧版“每条标记可单独设提示词”已砍（入口改成了备注）；历史遗留的 customPrompt
+            // 不再读取——它对用户不可见也不可清，静默生效会让人以为全局提示词失灵
+            val basePrompt = ai.prompt
             current = current.copy(question = basePrompt)
             db.markerTurnDao().update(current)
         }
@@ -540,6 +542,9 @@ class AiSendManager(
             val buffer = StringBuilder()
             val reasoningBuffer = StringBuilder()
             var lastFlush = 0L
+            // 注册进 activeTurnJobs：合并讲解是最贵的调用之一，停止按钮必须真的能停。
+            // 与 generateTurn 同口径：成功/异常时摘除，取消时在 NonCancellable 里落库
+            coroutineContext[Job]?.let { activeTurnJobs[turnId] = it }
             try {
                 val general = settings.generalConfigNow()
                 val client = DeepSeekClient(ai, general.compressImages, general.compressQuality)
@@ -577,6 +582,8 @@ class AiSendManager(
                         }
                     },
                 )
+                // 成功也要摘掉：只在 catch 里 remove 的话，每成功一次就留一个 Job 在 map 里
+                activeTurnJobs.remove(turnId)
                 val t = System.currentTimeMillis()
                 val parsed = AiPrompts.splitExtras(answer)
                 db.markerTurnDao().update(
@@ -614,7 +621,35 @@ class AiSendManager(
                 )
                 return true
             } catch (e: CancellationException) {
-                _streaming.value = null
+                // 用户手动停止：与 generateTurn 同口径，已生成的部分保留（可通过追问“继续”接上），
+                // 全程落库避免轮次卡在“发送中”。成员未完成合并，回到失败态可重发
+                withContext(NonCancellable) {
+                    _streaming.value = null
+                    activeTurnJobs.remove(turnId)
+                    val partial = buffer.toString()
+                    val t = System.currentTimeMillis()
+                    if (partial.isNotEmpty()) {
+                        // 停止时也可能已经写出半个附加块，同样要切掉
+                        val parsed = AiPrompts.splitExtras(AiPrompts.visibleStream(partial))
+                        db.markerTurnDao().update(
+                            current.copy(
+                                status = MarkerTurn.TURN_SUCCESS,
+                                answer = parsed.answer,
+                                extra = parsed.extra?.let { json.encodeToString(TurnExtra.serializer(), it) },
+                                reasoning = reasoningBuffer.toString().takeIf { it.isNotBlank() }?.take(20000),
+                                finishReason = "stopped_by_user",
+                                updatedAt = t,
+                            ),
+                        )
+                        db.markerDao().updateAi(head.id, Marker.AI_SUCCESS, parsed.answer, null, t)
+                    } else {
+                        failTurn(current, "已手动停止生成")
+                        db.markerDao().updateAi(head.id, Marker.AI_FAILED, null, "已手动停止生成", t)
+                    }
+                    members.drop(1).forEach {
+                        db.markerDao().updateAi(it.id, Marker.AI_FAILED, null, "已手动停止生成", t)
+                    }
+                }
                 return false
             } catch (e: Exception) {
                 _streaming.value = null

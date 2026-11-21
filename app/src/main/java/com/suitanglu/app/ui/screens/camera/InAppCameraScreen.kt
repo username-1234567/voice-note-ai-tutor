@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -12,20 +14,24 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,10 +49,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.suitanglu.app.ui.screens.recording.PendingMarkerStore
+import com.suitanglu.app.ui.theme.MotionSpec
+import com.suitanglu.app.ui.theme.pressFeedback
+import com.suitanglu.app.ui.theme.tabularNumbers
 import java.io.File
 import java.util.Locale
 
@@ -137,13 +147,16 @@ fun InAppCameraScreen(
                         },
                 )
 
-                // 倍率常显：捏合时手指盖住画面中央，读数放在右上角不会挡
+                // 倍率常显：捏合时手指盖住画面中央，读数放在右上角不会挡。
+                // 预览页是裸布局不吃窗口 insets，得自己躲开状态栏，否则读数顶进时钟区；
+                // 数字连续变化，等宽避免捏合过程中读数左右微跳
                 Text(
                     String.format(Locale.US, "%.1f×", zoom),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelMedium.tabularNumbers(),
                     color = Color.White,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
+                        .statusBarsPadding()
                         .padding(16.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color.Black.copy(alpha = 0.45f))
@@ -163,45 +176,70 @@ fun InAppCameraScreen(
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
         }
+        // 底部控制区：全屏预览不消费系统 insets，导航栏留白由这里兜底；
+        // 快门走相机惯例——底部居中大圆钮，取消退到左侧，不再和快门挤成一竖排
         Column(
-            Modifier.fillMaxWidth().padding(16.dp),
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(top = 12.dp, bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
             }
-            Button(
-                onClick = {
-                    if (capturing) return@Button
-                    capturing = true
-                    val dir = File(context.cacheDir, "photos").apply { mkdirs() }
-                    val file = File(dir, "CAM_${System.currentTimeMillis()}.jpg")
-                    val options = ImageCapture.OutputFileOptions.Builder(file).build()
-                    imageCapture.takePicture(
-                        options,
-                        ContextCompat.getMainExecutor(context),
-                        object : ImageCapture.OnImageSavedCallback {
-                            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                                capturing = false
-                                PendingMarkerStore.capturedPath = file.absolutePath
-                                onCaptured()
-                            }
+            val shutterSource = remember { MutableInteractionSource() }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                // 左右各一个等重占位，快门严格居中（相机页的肌肉记忆位置）
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    TextButton(onClick = onCancel) { Text("取消") }
+                }
+                // 快门：外圈白描边 + 内芯白盘。拍摄中禁点（原 Button 的 return@Button 同语义）。
+                // 全页唯一主操作，接全应用统一的按下即缩（只动 transform 不动布局），
+                // 与弹窗按钮/播放键同一套手感；reducedMotion 时自动直接到位
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .pressFeedback(shutterSource, MotionSpec.PRESS_SCALE)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                        .border(3.dp, Color.White, CircleShape)
+                        .clickable(
+                            interactionSource = shutterSource,
+                            indication = LocalIndication.current,
+                            enabled = !capturing,
+                            onClickLabel = "拍摄",
+                            role = Role.Button,
+                        ) {
+                            capturing = true
+                            val dir = File(context.cacheDir, "photos").apply { mkdirs() }
+                            val file = File(dir, "CAM_${System.currentTimeMillis()}.jpg")
+                            val options = ImageCapture.OutputFileOptions.Builder(file).build()
+                            imageCapture.takePicture(
+                                options,
+                                ContextCompat.getMainExecutor(context),
+                                object : ImageCapture.OnImageSavedCallback {
+                                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                        capturing = false
+                                        PendingMarkerStore.capturedPath = file.absolutePath
+                                        onCaptured()
+                                    }
 
-                            override fun onError(exception: ImageCaptureException) {
-                                capturing = false
-                                error = "拍照失败：${exception.message}"
-                            }
+                                    override fun onError(exception: ImageCaptureException) {
+                                        capturing = false
+                                        error = "拍照失败：${exception.message}"
+                                    }
+                                },
+                            )
                         },
-                    )
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) {
-                Icon(Icons.Filled.Camera, contentDescription = null)
-                Spacer(Modifier.padding(start = 8.dp))
-                Text("拍摄")
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(56.dp).clip(CircleShape).background(Color.White))
+                }
+                Box(Modifier.weight(1f))
             }
-            TextButton(onClick = onCancel) { Text("取消") }
         }
     }
 }

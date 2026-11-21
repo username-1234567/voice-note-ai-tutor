@@ -2,7 +2,9 @@ package com.suitanglu.app.ai
 
 import com.suitanglu.app.data.AiConfig
 import com.suitanglu.app.util.ImageUtil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -62,9 +64,15 @@ class DeepSeekClient(
         return if (b.endsWith("/chat/completions")) b else "$b/chat/completions"
     }
 
-    /** 只有官方端点认 thinking / reasoning_effort，其他 OpenAI 兼容服务下发会被拒 */
+    /**
+     * 只有官方端点认 thinking / reasoning_effort，其他 OpenAI 兼容服务下发会被拒。
+     *
+     * 判定与学术研讨入口、AI 配置页提示共用 [isOfficialDeepSeekEndpoint]（host 精确等于
+     * api.deepseek.com），不再按 baseUrl 是否包含 "deepseek" 字样判断——中转地址常带
+     * deepseek 字样却没有 thinking 能力，误下发会被 400。
+     */
     private fun supportsThinking(): Boolean =
-        base().contains("deepseek", ignoreCase = true)
+        isOfficialDeepSeekEndpoint(config.baseUrl)
 
     private fun client(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -158,18 +166,29 @@ class DeepSeekClient(
                 .post(body)
                 .build()
 
-            val response = client().newCall(request).await()
-            response.use { resp ->
-                if (!resp.isSuccessful) {
-                    val err = runCatching { resp.body?.string() }.getOrNull().orEmpty().take(500)
-                    throw IOException("HTTP ${resp.code}: ${err.ifBlank { resp.message }}")
+            val call = client().newCall(request)
+            val response = call.await()
+            // 「停止生成」必须能立刻掐断读流：SSE 的 while 循环是阻塞 IO，不检查协程取消，
+            // 只 cancel Job 的话会把整个回复读完才停——按钮看起来就是坏的。
+            // 协程被取消时同步 cancel 这个 call，socket 断开让阻塞读取立刻抛 IOException，
+            // readSse 再转成 CancellationException，上层走「保留已生成的部分文本」的落库路径
+            val job = coroutineContext[Job]
+            val cancelHook = job?.invokeOnCompletion { cause -> if (cause != null) runCatching { call.cancel() } }
+            try {
+                response.use { resp ->
+                    if (!resp.isSuccessful) {
+                        val err = runCatching { resp.body?.string() }.getOrNull().orEmpty().take(500)
+                        throw IOException("HTTP ${resp.code}: ${err.ifBlank { resp.message }}")
+                    }
+                    if (config.stream) {
+                        readSse(response, job, onDelta, onReasoning)
+                    } else {
+                        // 非流式只在对端一次性返回完整 JSON，思考过程也只能整段回传
+                        readFull(response, job, onReasoning)
+                    }
                 }
-                if (config.stream) {
-                    readSse(response, onDelta, onReasoning)
-                } else {
-                    // 非流式只在对端一次性返回完整 JSON，思考过程也只能整段回传
-                    readFull(response, onReasoning)
-                }
+            } finally {
+                cancelHook?.dispose()
             }
         }
 
@@ -225,14 +244,28 @@ class DeepSeekClient(
 
     private fun readSse(
         response: Response,
+        job: Job?,
         onDelta: (String) -> Unit,
         onReasoning: ((String) -> Unit)? = null,
     ): Pair<String, ChatUsage> {
         val source = response.body?.source() ?: throw IOException("空响应")
         val sb = StringBuilder()
         var usage: ChatUsage? = null
+        // 协程被取消（用户点了停止生成）就立刻停手。转成 CancellationException 是刻意的：
+        // AiSendManager 靠它走「保留已生成的部分文本」的取消落库路径，普通 IOException 会变成失败
+        fun checkCancelled() {
+            if (job != null && !job.isActive) throw CancellationException("已手动停止生成")
+        }
         while (true) {
-            val line = source.readUtf8Line() ?: break
+            checkCancelled()
+            val line = try {
+                source.readUtf8Line()
+            } catch (e: IOException) {
+                // call.cancel() 掐断 socket 也以 IOException 冒出来；确认确实是取消再转写，
+                // 真正的网络错误（断网、超时）原样抛出走失败路径
+                checkCancelled()
+                throw e
+            } ?: break
             if (!line.startsWith("data:")) continue
             val payload = line.removePrefix("data:").trim()
             if (payload == "[DONE]") break
@@ -251,9 +284,17 @@ class DeepSeekClient(
 
     private fun readFull(
         response: Response,
+        job: Job?,
         onReasoning: ((String) -> Unit)? = null,
     ): Pair<String, ChatUsage> {
-        val text = response.body?.string().orEmpty()
+        if (job != null && !job.isActive) throw CancellationException("已手动停止生成")
+        val text = try {
+            response.body?.string().orEmpty()
+        } catch (e: IOException) {
+            // 与 readSse 同理：取消表现为 socket 断开的 IOException，确认后转写
+            if (job != null && !job.isActive) throw CancellationException("已手动停止生成")
+            throw e
+        }
         val slice = parseChunk(text) ?: throw IOException("响应解析失败: ${text.take(300)}")
         if (slice.reasoning.isNotEmpty()) onReasoning?.invoke(slice.reasoning)
         if (slice.text.isEmpty()) throw IOException("AI 返回了空回复")
