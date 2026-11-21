@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.suitanglu.app.ai.AiPrompts
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -20,7 +21,16 @@ data class AiConfig(
     val stream: Boolean = true,
     val timeoutSeconds: Int = 180,
     val maxTokens: Int = 0,
-    val prompt: String = "详细讲解内容",
+    val prompt: String = AiPrompts.DEFAULT_TASK,
+    /**
+     * 讲解风格：general（通用助教，跨学科）/ math（数学专业 Pro）。
+     * 决定发给模型的 system 消息，属于「长期不变」的那一层。
+     */
+    val promptStyle: String = AiPrompts.STYLE_GENERAL,
+    /** 讲解方式：auto / steps / intuition / check，追加在用户消息里 */
+    val explainMode: String = AiPrompts.MODE_AUTO,
+    /** 讲完后是否再要 3 个追问建议 + 1 道自测题（同一轮里输出，不额外请求） */
+    val enrich: Boolean = true,
     /**
      * 思考强度：off / low / high / max。
      *
@@ -62,6 +72,9 @@ class SettingsRepository(private val context: Context) {
         val aiTimeout = intPreferencesKey("ai_timeout_sec")
         val aiMaxTokens = intPreferencesKey("ai_max_tokens")
         val aiPrompt = stringPreferencesKey("ai_prompt")
+        val aiPromptStyle = stringPreferencesKey("ai_prompt_style")
+        val aiExplainMode = stringPreferencesKey("ai_explain_mode")
+        val aiEnrich = booleanPreferencesKey("ai_enrich")
         val aiReasoningEffort = stringPreferencesKey("ai_reasoning_effort")
         val cameraMode = stringPreferencesKey("camera_mode")
         val compressImages = booleanPreferencesKey("compress_images")
@@ -97,7 +110,10 @@ class SettingsRepository(private val context: Context) {
             stream = p[K.aiStream] ?: true,
             timeoutSeconds = p[K.aiTimeout] ?: 180,
             maxTokens = p[K.aiMaxTokens] ?: 0,
-            prompt = p[K.aiPrompt] ?: "详细讲解内容",
+            prompt = AiPrompts.normalizeTaskPrompt(p[K.aiPrompt]),
+            promptStyle = p[K.aiPromptStyle] ?: AiPrompts.STYLE_GENERAL,
+            explainMode = p[K.aiExplainMode] ?: AiPrompts.MODE_AUTO,
+            enrich = p[K.aiEnrich] ?: true,
             reasoningEffort = p[K.aiReasoningEffort] ?: "high",
         )
     }
@@ -216,6 +232,9 @@ class SettingsRepository(private val context: Context) {
             p[K.aiTimeout] = config.timeoutSeconds
             p[K.aiMaxTokens] = config.maxTokens
             p[K.aiPrompt] = config.prompt
+            p[K.aiPromptStyle] = config.promptStyle
+            p[K.aiExplainMode] = config.explainMode
+            p[K.aiEnrich] = config.enrich
             p[K.aiReasoningEffort] = config.reasoningEffort
         }
     }

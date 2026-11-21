@@ -121,6 +121,12 @@ data class MarkerTurn(
      */
     @ColumnInfo(defaultValue = "1")
     val active: Boolean = true,
+    /**
+     * 讲解附带的追问建议与自测题，JSON（TurnExtra）。
+     * 存在这一轮里而不是单独建表：它和这一版回答是一体的，
+     * 重新生成会连带换掉；解析失败时为 null，正文照常显示。
+     */
+    val extra: String? = null,
 ) {
     companion object {
         const val TURN_PENDING = "pending"

@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.suitanglu.app.data.SettingsRepository
+import com.suitanglu.app.data.AiConfig
 import com.suitanglu.app.data.db.AppDatabase
 import com.suitanglu.app.data.db.AiRequestLog
 import com.suitanglu.app.data.db.Marker
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
+import kotlinx.serialization.json.Json
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.coroutineContext
 import java.io.File
@@ -34,6 +36,8 @@ class AiSendManager(
     private val settings: SettingsRepository,
 ) {
     private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     private val _streaming = MutableStateFlow<StreamingState?>(null)
     val streaming: StateFlow<StreamingState?> = _streaming
@@ -213,6 +217,36 @@ class AiSendManager(
     }
 
     /**
+     * 这个标记在课堂里的位置，拼成给模型看的上下文。
+     *
+     * 合并后的标记只知道起点和终点：成员已被并入、从列表里隐藏，
+     * 所以按 mergedEndOffsetMs 画成时间段，而不是编出几个不存在的时刻。
+     */
+    private suspend fun contextFor(marker: Marker): String {
+        val rec = db.recordingDao().getById(marker.recordingId)
+        val imageCount = db.markerImageDao().getByMarker(marker.id).size
+        return AiPrompts.contextBlock(
+            courseName = rec?.courseName,
+            title = rec?.title.orEmpty(),
+            shots = listOf(Shot(marker.absoluteTime, marker.offsetMs)),
+            imageCount = imageCount,
+            notes = listOfNotNull(marker.userText),
+            rangeEndOffsetMs = marker.mergedEndOffsetMs,
+        )
+    }
+
+    /** 首轮末尾追加的模式说明与附加要求；追问轮不加，免得每问一句都附一道题 */
+    private fun turnTail(ai: AiConfig, firstTurn: Boolean): String {
+        if (!firstTurn) return ""
+        return buildString {
+            val mode = AiPrompts.modeTask(ai.explainMode)
+            if (mode.isNotBlank()) append("\n\n").append(mode)
+            val extras = AiPrompts.extrasInstruction(ai.enrich)
+            if (extras.isNotBlank()) append("\n\n").append(extras)
+        }
+    }
+
+    /**
      * 生成一轮回复。上下文 = 此前各轮问答原文（首轮问题为持久化的实际提示词，含图片），
      * 前缀与上一轮请求完全一致以命中 DeepSeek 上下文缓存。
      * 首轮问题 = 设置提示词 + 「涉及知识点」（标记文字备注），生成时持久化，可在对话中查看与编辑。
@@ -237,11 +271,10 @@ class AiSendManager(
 
         var current = turn
         if (current.orderIndex == 0 && current.question.isNullOrBlank()) {
-            // 首轮问题 = 提示词 + 涉及知识点（标记备注），持久化以便对话中显示与编辑。
-            // 标记自己设过提示词就用它，否则退回设置页的全局提示词
+            // 首轮问题只存"要 AI 怎么讲"。课程、时间、备注这些改由 contextFor 在发送时现拼，
+            // 存进 question 会让气泡变成一大段机器文本，编辑时也难以下手
             val basePrompt = marker.customPrompt?.takeIf { it.isNotBlank() } ?: ai.prompt
-            val knowledge = marker.userText?.takeIf { it.isNotBlank() }?.let { "\n涉及知识点：$it" }.orEmpty()
-            current = current.copy(question = basePrompt + knowledge)
+            current = current.copy(question = basePrompt)
             db.markerTurnDao().update(current)
         }
 
@@ -249,18 +282,27 @@ class AiSendManager(
         // 只取 active 版本——同一轮可能有多版，全塞进去模型会看到重复问答
         val history = db.markerTurnDao().getActiveByMarker(marker.id)
             .filter { it.orderIndex < current.orderIndex }
+        // 首轮的完整文本 = 课堂上下文 + 任务 + 模式 + 附加要求。
+        // 现拼而不是存进 question：气泡里该显示用户那句话，不是一整段机器上下文。
+        // 历史里的首轮也要按同样方式还原，否则前后两次请求前缀不一致，上下文缓存失效。
+        val context = contextFor(marker)
+        val tail = turnTail(ai, firstTurn = true)
+        fun firstOf(text: String) = AiPrompts.userMessage(context, text) + tail
+
         val messages = mutableListOf<ChatMessage>()
+        // system 放第一条：它的前缀必须逐字不变，缓存才有意义
+        messages += ChatMessage("system", AiPrompts.systemPrompt(ai.promptStyle))
         for (t in history) {
             messages += ChatMessage(
                 role = "user",
-                text = t.question.orEmpty(),
+                text = if (t.orderIndex == 0) firstOf(t.question.orEmpty()) else t.question.orEmpty(),
                 imageFiles = if (t.orderIndex == 0) images else emptyList(),
             )
             messages += ChatMessage("assistant", t.answer.orEmpty())
         }
         messages += ChatMessage(
             role = "user",
-            text = current.question.orEmpty(),
+            text = if (current.orderIndex == 0) firstOf(current.question.orEmpty()) else current.question.orEmpty(),
             imageFiles = if (current.orderIndex == 0) images else emptyList(),
         )
 
@@ -296,17 +338,23 @@ class AiSendManager(
                 val t = System.currentTimeMillis()
                 if (t - lastFlush > 300) {
                     lastFlush = t
-                    _streaming.value = StreamingState(marker.id, turn.id, buffer.toString())
+                    // 附加块不进正文：模型一开始输出 <<<FOLLOWUPS>>>，屏幕上的字就该停住，
+                    // 否则用户会眼看着一行标记冒出来再被抹掉
+                    _streaming.value = StreamingState(marker.id, turn.id, AiPrompts.visibleStream(buffer.toString()))
                 }
             }
             _streaming.value = null
             // 成功路径也要摘掉：只在 catch 里 remove 的话，每成功一条就留一个 Job 在 map 里
             activeTurnJobs.remove(turn.id)
             val t = System.currentTimeMillis()
+            // 正文与附加块分开存：正文进气泡和列表，附加块进 extra，
+            // 解析不出附加块时 extra 为 null，正文照旧
+            val parsed = AiPrompts.splitExtras(answer)
             db.markerTurnDao().update(
                 current.copy(
                     status = MarkerTurn.TURN_SUCCESS,
-                    answer = answer,
+                    answer = parsed.answer,
+                    extra = parsed.extra?.let { json.encodeToString(TurnExtra.serializer(), it) },
                     promptTokens = usage.promptTokens,
                     cacheHitTokens = usage.cacheHitTokens,
                     completionTokens = usage.completionTokens,
@@ -315,12 +363,12 @@ class AiSendManager(
                 ),
             )
             if (turn.orderIndex == 0) {
-                db.markerDao().updateAi(marker.id, Marker.AI_SUCCESS, answer, null, t)
+                db.markerDao().updateAi(marker.id, Marker.AI_SUCCESS, parsed.answer, null, t)
                 // 讲解刚生成完的这条，默认就进「待复习」：
                 // 刚听懂不等于记住了，这节课早晚要再翻一遍。用户可以自己点星取消。
                 db.markerDao().setNeedsReview(marker.id, true, t)
             }
-            db.aiRequestLogDao().finish(logId, "success", answer.take(20000), null, t)
+            db.aiRequestLogDao().finish(logId, "success", parsed.answer.take(20000), null, t)
             return true
         } catch (e: CancellationException) {
             // 用户手动停止或协程被取消：已生成的部分保留下来（可通过追问“继续”接上），
@@ -331,18 +379,21 @@ class AiSendManager(
                 val partial = buffer.toString()
                 val t = System.currentTimeMillis()
                 if (partial.isNotEmpty()) {
+                    // 停止时也可能已经写出半个附加块，同样要切掉，否则正文尾巴上挂着标记
+                    val parsed = AiPrompts.splitExtras(partial)
                     db.markerTurnDao().update(
                         current.copy(
                             status = MarkerTurn.TURN_SUCCESS,
-                            answer = partial,
+                            answer = parsed.answer,
+                            extra = parsed.extra?.let { json.encodeToString(TurnExtra.serializer(), it) },
                             finishReason = "stopped_by_user",
                             updatedAt = t,
                         ),
                     )
                     if (turn.orderIndex == 0) {
-                        db.markerDao().updateAi(marker.id, Marker.AI_SUCCESS, partial, null, t)
+                        db.markerDao().updateAi(marker.id, Marker.AI_SUCCESS, parsed.answer, null, t)
                     }
-                    db.aiRequestLogDao().finish(logId, "stopped", partial.take(20000), null, t)
+                    db.aiRequestLogDao().finish(logId, "stopped", parsed.answer.take(20000), null, t)
                 } else {
                     failTurn(current, "已手动停止生成")
                     if (turn.orderIndex == 0) {
@@ -420,20 +471,19 @@ class AiSendManager(
                 return false
             }
 
-            val effectivePrompt = prompt.ifBlank { ai.prompt }
-            val question = buildString {
-                append(effectivePrompt)
-                val knowledge = members.mapNotNull { it.userText?.takeIf { t -> t.isNotBlank() } }
-                if (knowledge.isNotEmpty()) {
-                    append("\n\n涉及知识点：")
-                    knowledge.forEach { append("\n- ").append(it) }
-                }
-                if (images.size > 1) {
-                    append("\n\n（附件是同一处内容的 ")
-                    append(images.size)
-                    append(" 张图，请合起来讲；重复的部分不用逐张复述。）")
-                }
-            }
+            // 只存"要 AI 怎么讲"，课堂上下文与附加要求发送时现拼（见 turnTail），
+            // 和单条讲解走同一套，气泡里也不会出现整段机器文本
+            val question = prompt.ifBlank { ai.prompt }
+            val rec = db.recordingDao().getById(head.recordingId)
+            val context = AiPrompts.contextBlock(
+                courseName = rec?.courseName,
+                title = rec?.title.orEmpty(),
+                shots = members.map { Shot(it.absoluteTime, it.offsetMs) },
+                imageCount = images.size,
+                notes = members.mapNotNull { it.userText?.takeIf { t -> t.isNotBlank() } },
+                rangeEndOffsetMs = members.last().offsetMs,
+            )
+            val sendText = AiPrompts.userMessage(context, question) + turnTail(ai, firstTurn = true)
 
             // 合并即重做，但旧讲解不删：它已经花过钱，删掉等于把真实支出从账上抹掉。
             // 把旧版置为非生效、新讲解作为当前版，用户还能用 1/2 切回看单条讲解
@@ -456,21 +506,26 @@ class AiSendManager(
                 val general = settings.generalConfigNow()
                 val client = DeepSeekClient(ai, general.compressImages, general.compressQuality)
                 val (answer, usage) = client.chat(
-                    listOf(ChatMessage("user", question, images)),
+                    listOf(
+                        ChatMessage("system", AiPrompts.systemPrompt(ai.promptStyle)),
+                        ChatMessage("user", sendText, images),
+                    ),
                 ) { delta ->
                     buffer.append(delta)
                     val t = System.currentTimeMillis()
                     if (t - lastFlush > 300) {
                         lastFlush = t
-                        _streaming.value = StreamingState(head.id, turnId, buffer.toString())
+                        _streaming.value = StreamingState(head.id, turnId, AiPrompts.visibleStream(buffer.toString()))
                     }
                 }
                 _streaming.value = null
                 val t = System.currentTimeMillis()
+                val parsed = AiPrompts.splitExtras(answer)
                 db.markerTurnDao().update(
                     current.copy(
                         status = MarkerTurn.TURN_SUCCESS,
-                        answer = answer,
+                        answer = parsed.answer,
+                        extra = parsed.extra?.let { json.encodeToString(TurnExtra.serializer(), it) },
                         promptTokens = usage.promptTokens,
                         cacheHitTokens = usage.cacheHitTokens,
                         completionTokens = usage.completionTokens,
@@ -478,7 +533,7 @@ class AiSendManager(
                         updatedAt = t,
                     ),
                 )
-                db.markerDao().updateAi(head.id, Marker.AI_SUCCESS, answer, null, t)
+                db.markerDao().updateAi(head.id, Marker.AI_SUCCESS, parsed.answer, null, t)
                 // 合并讲解同样算一次"讲完了"：组首进待复习（成员已并入，不单独占一条）
                 db.markerDao().setNeedsReview(head.id, true, t)
                 // 真正合并成一个：把成员的图片挪到组首标记下，成员记 mergedInto 指过来（列表里隐藏）。
