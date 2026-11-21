@@ -127,6 +127,12 @@ data class MarkerTurn(
      * 重新生成会连带换掉；解析失败时为 null，正文照常显示。
      */
     val extra: String? = null,
+    /**
+     * 思考过程（DeepSeek thinking 模式的 reasoning_content）。
+     * 只用来「展开看看 AI 怎么想的」，不参与后续对话上下文；
+     * 关掉思考时为空。
+     */
+    val reasoning: String? = null,
 ) {
     companion object {
         const val TURN_PENDING = "pending"

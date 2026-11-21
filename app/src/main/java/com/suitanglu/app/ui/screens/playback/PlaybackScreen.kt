@@ -25,6 +25,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -1944,6 +1945,9 @@ private fun TurnView(
             }
         }
         Spacer(Modifier.height(6.dp))
+        // 思考过程排在回答前面：thinking 模式下它是先到的，
+        // 而且用户点开就是为了看"它是怎么想的"
+        ReasoningBlock(turn = turn, streaming = streaming)
         // 回答区
         when {
             turn.status == MarkerTurn.TURN_SENDING && streaming != null -> {
@@ -2039,9 +2043,76 @@ private fun UsageHint(turn: MarkerTurn) {
     )
 }
 
+/**
+ * 思考过程（DeepSeek thinking 模式的 reasoning_content）。
+ *
+ * 生成中自动展开，正文一开始出现就收起——否则一大段思考会把回答顶到屏幕外；
+ * 已经生成完的轮次默认收起，点标题才展开。
+ */
+@Composable
+private fun ReasoningBlock(turn: MarkerTurn, streaming: StreamingState?) {
+    val text = streaming?.reasoning.orEmpty().ifBlank { turn.reasoning.orEmpty() }
+    if (text.isBlank()) return
+
+    // 只有"正在思考、正文还没来"才叫思考中；正文到了就只是留档
+    val thinking = streaming != null && streaming.text.isEmpty()
+    var expanded by rememberSaveable(turn.id) { mutableStateOf(streaming != null) }
+    val answerStarted = !streaming?.text.isNullOrEmpty()
+    LaunchedEffect(answerStarted) { if (answerStarted) expanded = false }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.35f),
+                RoundedCornerShape(10.dp),
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (thinking) "思考过程 · 思考中…" else "思考过程",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.weight(1f))
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "收起思考过程" else "展开思考过程",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        if (expanded) {
+            // 思考可能上万字，整段丢给 Text 会让每次刷新都重排一遍；
+            // 生成中只留最后一段（用户看的是"现在在想什么"），结束后才给全文
+            val shown = if (thinking && text.length > 4000) "…\n" + text.takeLast(4000) else text
+            val scroll = rememberScrollState()
+            // 思考阶段跟着最新一行走：固定高度里要是一直停在开头，等于看不到当前在想什么
+            LaunchedEffect(shown.length, thinking) {
+                if (thinking) scroll.scrollTo(scroll.maxValue)
+            }
+            Text(
+                shown,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .heightIn(max = 240.dp)
+                    .verticalScroll(scroll),
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
 /** 首轮存的是整段提示词（可能六行），气泡里只显示第一句；要看全文点「编辑」 */
-private fun questionBubble(turn: MarkerTurn): String {
-    val q = turn.question.orEmpty()
+private fun questionBubble(turn: MarkerTurn): String {    val q = turn.question.orEmpty()
     if (turn.orderIndex != 0) return q
     return q.lineSequence().firstOrNull { it.isNotBlank() }?.take(60) ?: "（讲解这页内容）"
 }

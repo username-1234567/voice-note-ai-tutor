@@ -93,9 +93,15 @@ class DeepSeekClient(
     /**
      * 多轮对话请求。带图的首条消息逐字节稳定（同文件 → 同 base64），
      * 配合历史轮次按序拼接可命中 DeepSeek 上下文缓存，追问成本大幅降低。
-     * onDelta 回传增量文本；返回 完整回复 + token 用量。
+     * onDelta 回传正文增量，onReasoning 回传思考过程增量（仅在 thinking 模式下有）；
+     * 返回 完整回复 + token 用量。
      */
-    suspend fun chat(messages: List<ChatMessage>, onDelta: (String) -> Unit): Pair<String, ChatUsage> =
+    suspend fun chat(
+        messages: List<ChatMessage>,
+        // onDelta 放最后：现有的调用点都是尾随 lambda，参数顺序变了会全部报错
+        onReasoning: ((String) -> Unit)? = null,
+        onDelta: (String) -> Unit,
+    ): Pair<String, ChatUsage> =
         withContext(Dispatchers.IO) {
             val body = json.encodeToString(
                 JsonObject.serializer(),
@@ -159,14 +165,21 @@ class DeepSeekClient(
                     throw IOException("HTTP ${resp.code}: ${err.ifBlank { resp.message }}")
                 }
                 if (config.stream) {
-                    readSse(response, onDelta)
+                    readSse(response, onDelta, onReasoning)
                 } else {
-                    readFull(response)
+                    // 非流式只在对端一次性返回完整 JSON，思考过程也只能整段回传
+                    readFull(response, onReasoning)
                 }
             }
         }
 
-    internal data class Slice(val text: String, val finishReason: String?, val usage: ChatUsage?)
+    internal data class Slice(
+        val text: String,
+        val finishReason: String?,
+        val usage: ChatUsage?,
+        /** 思考过程增量。DeepSeek 的 thinking 模式会在 content 之前先吐 reasoning_content */
+        val reasoning: String = "",
+    )
 
     /** SSE 与非流式共用的分片解析：choices[0].delta/message.content + finish_reason + usage；error 分片抛出 */
     internal fun parseChunk(payload: String): Slice? {
@@ -190,9 +203,13 @@ class DeepSeekClient(
         }
 
         val choice = (obj["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
-        val contentNode = (choice?.get("delta") as? JsonObject)?.get("content")
-            ?: (choice?.get("message") as? JsonObject)?.get("content")
+        val deltaObj = choice?.get("delta") as? JsonObject
+        val messageObj = choice?.get("message") as? JsonObject
+        val contentNode = deltaObj?.get("content") ?: messageObj?.get("content")
         val text = (contentNode as? JsonPrimitive)?.contentOrNull.orEmpty()
+        // 思考过程：官方 thinking 模式下与 content 并列返回；不开思考时没有这个字段
+        val reasoningNode = deltaObj?.get("reasoning_content") ?: messageObj?.get("reasoning_content")
+        val reasoning = (reasoningNode as? JsonPrimitive)?.contentOrNull.orEmpty()
         val finishReason = (choice?.get("finish_reason") as? JsonPrimitive)?.contentOrNull
         val usageObj = obj["usage"] as? JsonObject
         val usage = usageObj?.let {
@@ -203,10 +220,14 @@ class DeepSeekClient(
                 finishReason = finishReason,
             )
         }
-        return Slice(text, finishReason, usage)
+        return Slice(text, finishReason, usage, reasoning)
     }
 
-    private fun readSse(response: Response, onDelta: (String) -> Unit): Pair<String, ChatUsage> {
+    private fun readSse(
+        response: Response,
+        onDelta: (String) -> Unit,
+        onReasoning: ((String) -> Unit)? = null,
+    ): Pair<String, ChatUsage> {
         val source = response.body?.source() ?: throw IOException("空响应")
         val sb = StringBuilder()
         var usage: ChatUsage? = null
@@ -216,6 +237,7 @@ class DeepSeekClient(
             val payload = line.removePrefix("data:").trim()
             if (payload == "[DONE]") break
             val slice = parseChunk(payload) ?: continue
+            if (slice.reasoning.isNotEmpty()) onReasoning?.invoke(slice.reasoning)
             if (slice.text.isNotEmpty()) {
                 sb.append(slice.text)
                 onDelta(slice.text)
@@ -227,9 +249,13 @@ class DeepSeekClient(
         return sb.toString() to result
     }
 
-    private fun readFull(response: Response): Pair<String, ChatUsage> {
+    private fun readFull(
+        response: Response,
+        onReasoning: ((String) -> Unit)? = null,
+    ): Pair<String, ChatUsage> {
         val text = response.body?.string().orEmpty()
         val slice = parseChunk(text) ?: throw IOException("响应解析失败: ${text.take(300)}")
+        if (slice.reasoning.isNotEmpty()) onReasoning?.invoke(slice.reasoning)
         if (slice.text.isEmpty()) throw IOException("AI 返回了空回复")
         return slice.text to (slice.usage ?: ChatUsage(0, 0, slice.text.length / 4, slice.finishReason))
     }

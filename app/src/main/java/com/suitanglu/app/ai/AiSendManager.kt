@@ -34,6 +34,8 @@ data class StreamingState(
     val text: String,
     /** 正文已经写完、正在吐追问建议和自测题——此时 text 不再增长，界面要说清楚在等什么 */
     val enriching: Boolean = false,
+    /** 思考过程（thinking 模式下先于正文出现）；关掉思考时始终为空 */
+    val reasoning: String = "",
 )
 
 class AiSendManager(
@@ -319,44 +321,58 @@ class AiSendManager(
         )
 
         var buffer = StringBuilder()
+        // 思考过程和正文分开攒：前者只用来展示，不进对话历史，也不参与附加块解析
+        val reasoningBuffer = StringBuilder()
         var lastFlush = 0L
         // 重复输出防护：模型退化时会对同一分片无限重复，命中阈值立即终止（用户也可手动停止）
         var repeatCount = 0
         var lastDelta: String? = null
+
+        // 思考过程和正文共用一次节流：思考阶段每 300ms 也要刷新，否则界面看着像没反应
+        fun emitStream(force: Boolean = false) {
+            val t = System.currentTimeMillis()
+            if (!force && t - lastFlush <= 300) return
+            lastFlush = t
+            val raw = buffer.toString()
+            _streaming.value = StreamingState(
+                marker.id,
+                turn.id,
+                AiPrompts.visibleStream(raw),
+                enriching = raw.contains(AiPrompts.SUGGEST_OPEN),
+                reasoning = reasoningBuffer.toString(),
+            )
+        }
+
         coroutineContext[Job]?.let { activeTurnJobs[turn.id] = it }
         try {
             val general = settings.generalConfigNow()
             val client = DeepSeekClient(ai, general.compressImages, general.compressQuality)
-            val (answer, usage) = client.chat(messages) { delta ->
-                if (delta.isNotEmpty() && delta == lastDelta) {
-                    repeatCount++
-                    if (repeatCount >= 20) {
-                        throw IOException("检测到模型重复输出，已自动终止（可点重新生成重试）")
+            val (answer, usage) = client.chat(
+                messages = messages,
+                onDelta = { delta ->
+                    if (delta.isNotEmpty() && delta == lastDelta) {
+                        repeatCount++
+                        if (repeatCount >= 20) {
+                            throw IOException("检测到模型重复输出，已自动终止（可点重新生成重试）")
+                        }
+                    } else {
+                        repeatCount = 0
+                        lastDelta = delta
                     }
-                } else {
-                    repeatCount = 0
-                    lastDelta = delta
-                }
-                if (buffer.length > 200_000) {
-                    throw IOException("输出超出长度上限，已自动终止")
-                }
-                buffer.append(delta)
-                val t = System.currentTimeMillis()
-                if (t - lastFlush > 300) {
-                    lastFlush = t
+                    if (buffer.length > 200_000) {
+                        throw IOException("输出超出长度上限，已自动终止")
+                    }
+                    buffer.append(delta)
                     // 附加块不进正文：模型一开始输出 <<<FOLLOWUPS>>>，屏幕上的字就该停住，
                     // 否则用户会眼看着一行标记冒出来再被抹掉。
                     // 同时告诉界面「正文写完了，正在补追问和自测」，免得看起来像卡死
-                    val raw = buffer.toString()
-                    _streaming.value = StreamingState(
-                        marker.id,
-                        turn.id,
-                        AiPrompts.visibleStream(raw),
-                        enriching = raw.contains(AiPrompts.SUGGEST_OPEN),
-                    )
-                }
-            }
-            _streaming.value = null
+                    emitStream()
+                },
+                onReasoning = { delta ->
+                    if (reasoningBuffer.length < 60_000) reasoningBuffer.append(delta)
+                    emitStream()
+                },
+            )
             // 成功路径也要摘掉：只在 catch 里 remove 的话，每成功一条就留一个 Job 在 map 里
             activeTurnJobs.remove(turn.id)
             val t = System.currentTimeMillis()
@@ -368,6 +384,7 @@ class AiSendManager(
                     status = MarkerTurn.TURN_SUCCESS,
                     answer = parsed.answer,
                     extra = parsed.extra?.let { json.encodeToString(TurnExtra.serializer(), it) },
+                    reasoning = reasoningBuffer.toString().takeIf { it.isNotBlank() }?.take(20000),
                     promptTokens = usage.promptTokens,
                     cacheHitTokens = usage.cacheHitTokens,
                     completionTokens = usage.completionTokens,
@@ -375,6 +392,8 @@ class AiSendManager(
                     updatedAt = t,
                 ),
             )
+            // 落库之后再撤掉流式状态：否则思考过程会先消失一帧、再从数据库里冒出来
+            _streaming.value = null
             if (turn.orderIndex == 0) {
                 db.markerDao().updateAi(marker.id, Marker.AI_SUCCESS, parsed.answer, null, t)
                 // 讲解刚生成完的这条，默认就进「待复习」：
@@ -399,6 +418,7 @@ class AiSendManager(
                             status = MarkerTurn.TURN_SUCCESS,
                             answer = parsed.answer,
                             extra = parsed.extra?.let { json.encodeToString(TurnExtra.serializer(), it) },
+                            reasoning = reasoningBuffer.toString().takeIf { it.isNotBlank() }?.take(20000),
                             finishReason = "stopped_by_user",
                             updatedAt = t,
                         ),
@@ -518,30 +538,45 @@ class AiSendManager(
             }
 
             val buffer = StringBuilder()
+            val reasoningBuffer = StringBuilder()
             var lastFlush = 0L
             try {
                 val general = settings.generalConfigNow()
                 val client = DeepSeekClient(ai, general.compressImages, general.compressQuality)
                 val (answer, usage) = client.chat(
-                    listOf(
+                    messages = listOf(
                         ChatMessage("system", AiPrompts.systemPrompt(ai.promptStyle)),
                         ChatMessage("user", sendText, images),
                     ),
-                ) { delta ->
-                    buffer.append(delta)
-                    val t = System.currentTimeMillis()
-                    if (t - lastFlush > 300) {
-                        lastFlush = t
-                        val raw = buffer.toString()
-                        _streaming.value = StreamingState(
-                            head.id,
-                            turnId,
-                            AiPrompts.visibleStream(raw),
-                            enriching = raw.contains(AiPrompts.SUGGEST_OPEN),
-                        )
-                    }
-                }
-                _streaming.value = null
+                    onDelta = { delta ->
+                        buffer.append(delta)
+                        val t = System.currentTimeMillis()
+                        if (t - lastFlush > 300) {
+                            lastFlush = t
+                            val raw = buffer.toString()
+                            _streaming.value = StreamingState(
+                                head.id,
+                                turnId,
+                                AiPrompts.visibleStream(raw),
+                                enriching = raw.contains(AiPrompts.SUGGEST_OPEN),
+                                reasoning = reasoningBuffer.toString(),
+                            )
+                        }
+                    },
+                    onReasoning = { delta ->
+                        if (reasoningBuffer.length < 60_000) reasoningBuffer.append(delta)
+                        val t = System.currentTimeMillis()
+                        if (t - lastFlush > 300) {
+                            lastFlush = t
+                            _streaming.value = StreamingState(
+                                head.id,
+                                turnId,
+                                AiPrompts.visibleStream(buffer.toString()),
+                                reasoning = reasoningBuffer.toString(),
+                            )
+                        }
+                    },
+                )
                 val t = System.currentTimeMillis()
                 val parsed = AiPrompts.splitExtras(answer)
                 db.markerTurnDao().update(
@@ -549,6 +584,7 @@ class AiSendManager(
                         status = MarkerTurn.TURN_SUCCESS,
                         answer = parsed.answer,
                         extra = parsed.extra?.let { json.encodeToString(TurnExtra.serializer(), it) },
+                        reasoning = reasoningBuffer.toString().takeIf { it.isNotBlank() }?.take(20000),
                         promptTokens = usage.promptTokens,
                         cacheHitTokens = usage.cacheHitTokens,
                         completionTokens = usage.completionTokens,
@@ -556,6 +592,7 @@ class AiSendManager(
                         updatedAt = t,
                     ),
                 )
+                _streaming.value = null
                 db.markerDao().updateAi(head.id, Marker.AI_SUCCESS, parsed.answer, null, t)
                 // 合并讲解同样算一次"讲完了"：组首进待复习（成员已并入，不单独占一条）
                 db.markerDao().setNeedsReview(head.id, true, t)

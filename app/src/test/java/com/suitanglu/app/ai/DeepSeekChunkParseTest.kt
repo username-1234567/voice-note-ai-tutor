@@ -25,6 +25,21 @@ class DeepSeekChunkParseTest {
     private val client = DeepSeekClient(AiConfig())
 
     @Test
+    fun `思考过程与正文分别取出`() {
+        val thinking = client.parseChunk(
+            """{"choices":[{"index":0,"delta":{"content":null,"reasoning_content":"先看这个矩阵的秩"},"finish_reason":null}]}""",
+        )
+        assertEquals("先看这个矩阵的秩", thinking?.reasoning)
+        assertEquals("", thinking?.text)
+
+        val answering = client.parseChunk(
+            """{"choices":[{"index":0,"delta":{"content":"秩是 2"},"finish_reason":null}]}""",
+        )
+        assertEquals("秩是 2", answering?.text)
+        assertEquals("", answering?.reasoning)
+    }
+
+    @Test
     fun `usage 为 null 的正常分片照常取到正文`() {
         val slice = client.parseChunk(
             """{"id":"1","choices":[{"index":0,"delta":{"content":"同学们好"},"finish_reason":null}],"usage":null}""",
