@@ -82,6 +82,14 @@ object AiPrompts {
     fun systemPrompt(style: String): String =
         if (style == STYLE_MATH) SYSTEM_MATH else SYSTEM_GENERAL
 
+    /**
+     * 非讲解场景（普通聊天、汇编提纲）只追加这段口径。
+     *
+     * 它们各有自己的 system（聊天要保留"看课件/不编"的边界，提纲要保留固定的三节结构），
+     * 整套换掉会把原有约束冲掉；追加一段数学严谨性要求，才能既统一口径又不破坏本职。
+     */
+    fun styleAddendum(style: String): String = if (style == STYLE_MATH) MATH_ADDENDUM else ""
+
     /** 模式说明追加在用户消息里，不进 system——换模式不该让缓存整段失效 */
     fun modeTask(mode: String): String = when (mode) {
         MODE_STEPS -> """
@@ -328,6 +336,15 @@ object AiPrompts {
 
     // ================= 两套 system =================
 
+    private val MATH_ADDENDUM = """
+        【数学口径】当前设置是「数学 Pro」，面向数学专业初学者：
+        - 术语、符号、定理的适用条件必须准确。
+        - 推导保留必要步骤和依据，不用「显然」「易得」「同理」略过关键处。
+        - 用到定理时说明用了哪个、当前条件是否满足。
+        - 不必为了简短牺牲严谨；但也不要借题展开无关内容。
+        - 不确定的地方直接说，不要编。
+    """.trimIndent()
+
     private val SYSTEM_GENERAL = """
 # 角色
 
@@ -383,6 +400,8 @@ object AiPrompts {
 7. 小结
 
 如果只是一道题或一个公式，简化结构，别硬套。
+
+分节时用二级标题（##）起头：手机上每节可以单独收起，就不必一路划到底。短回答不必分节。
 
 # 追问
 
@@ -459,6 +478,8 @@ object AiPrompts {
 7. 小结
 
 只包含一个公式或一道题时，简化结构。
+
+分节时用二级标题（##）起头：手机上每节可以单独收起，就不必一路划到底。短回答不必分节。
 
 # 追问
 

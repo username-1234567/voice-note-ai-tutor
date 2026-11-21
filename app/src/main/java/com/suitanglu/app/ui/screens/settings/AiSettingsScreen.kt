@@ -308,7 +308,7 @@ fun AiSettingsScreen(onBack: () -> Unit) {
 
             SwitchRow(
                 title = "讲完给追问建议和自测题",
-                subtitle = "3 个可点的追问 + 1 道单选题，跟着同一轮回复一起出，不额外发请求",
+                subtitle = "默认关闭。开启后每次讲解会多等几秒、多一两百输出 token；内容是跟着同一轮回复一起出的，不额外发请求",
                 checked = enrich,
                 onCheckedChange = { enrich = it },
             )

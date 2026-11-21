@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.suitanglu.app.RecordApp
+import com.suitanglu.app.ai.AiPrompts
 import com.suitanglu.app.ai.ChatMessage
 import com.suitanglu.app.ai.DeepSeekClient
 import com.suitanglu.app.data.db.ChatSession
@@ -149,7 +150,8 @@ class ChatViewModel(app: Application, private val sessionId: Long) : AndroidView
 
                 val history = dao.getBySession(sessionId)
                 val messages = buildList {
-                    add(ChatMessage("system", SYSTEM_PROMPT))
+                    // 聊天有自己的边界（看课件、不编），只追加数学口径，不整套替换
+                    add(ChatMessage("system", SYSTEM_PROMPT + AiPrompts.styleAddendum(ai.promptStyle)))
                     // 最近 20 条：更早的追问对当前问题帮助有限，全带上会一直变慢
                     history.dropLast(1).takeLast(20).forEach { m ->
                         add(

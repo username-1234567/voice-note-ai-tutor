@@ -8,6 +8,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.suitanglu.app.AppGraph
+import com.suitanglu.app.ai.AiPrompts
 import com.suitanglu.app.ai.ChatMessage
 import com.suitanglu.app.ai.DeepSeekClient
 import com.suitanglu.app.data.db.Marker
@@ -424,8 +425,14 @@ class PlaybackViewModel(app: Application, val recordingId: Long) : AndroidViewMo
                 // 逐 token 刷新会让对话卡成幻灯片。攒 300ms 再推一次，和标记生成保持一致。
                 val draft = StringBuilder()
                 var lastFlush = 0L
+                // 提纲的 system 只放数学口径：它自己的三节结构写在 user 里，
+                // 换成整套教学 system 反而会把「只整理材料、不许补充」冲掉
+                val digestSystem = AiPrompts.styleAddendum(ai.promptStyle)
                 val (text, _) = DeepSeekClient(ai).chat(
-                    listOf(ChatMessage("user", prompt)),
+                    buildList {
+                        if (digestSystem.isNotBlank()) add(ChatMessage("system", digestSystem))
+                        add(ChatMessage("user", prompt))
+                    },
                 ) { delta ->
                     draft.append(delta)
                     val now = System.currentTimeMillis()

@@ -30,7 +30,7 @@ data class AiConfig(
     /** 讲解方式：auto / steps / intuition / check，追加在用户消息里 */
     val explainMode: String = AiPrompts.MODE_AUTO,
     /** 讲完后是否再要 3 个追问建议 + 1 道自测题（同一轮里输出，不额外请求） */
-    val enrich: Boolean = true,
+    val enrich: Boolean = false,
     /**
      * 思考强度：off / low / high / max。
      *
@@ -113,7 +113,7 @@ class SettingsRepository(private val context: Context) {
             prompt = AiPrompts.normalizeTaskPrompt(p[K.aiPrompt]),
             promptStyle = p[K.aiPromptStyle] ?: AiPrompts.STYLE_GENERAL,
             explainMode = p[K.aiExplainMode] ?: AiPrompts.MODE_AUTO,
-            enrich = p[K.aiEnrich] ?: true,
+            enrich = p[K.aiEnrich] ?: false,
             reasoningEffort = p[K.aiReasoningEffort] ?: "high",
         )
     }
