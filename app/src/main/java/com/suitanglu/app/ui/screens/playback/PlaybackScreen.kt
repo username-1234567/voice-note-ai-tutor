@@ -137,7 +137,10 @@ import com.suitanglu.app.data.db.PauseEvent
 import com.suitanglu.app.data.db.Recording
 import com.suitanglu.app.data.db.RecordingChat
 import com.suitanglu.app.data.db.RecordingDigest
+import com.suitanglu.app.ai.Quiz
 import com.suitanglu.app.ai.StreamingState
+import com.suitanglu.app.ai.TurnExtra
+import kotlinx.serialization.json.Json
 import com.suitanglu.app.ui.components.AppAlertDialog
 import com.suitanglu.app.ui.screens.recording.UCropContract
 import com.suitanglu.app.ui.screens.recording.existingFileUri
@@ -1688,6 +1691,7 @@ private fun MarkerCard(
                                 editingTurnId = live.id
                                 editDraft = live.question.orEmpty()
                             },
+                            onFollowUp = onFollowUp,
                             variantIndex = liveIdx + 1,
                             variantTotal = versions.size,
                             onSelectVariant = { target ->
@@ -1864,6 +1868,8 @@ private fun TurnView(
     onStopTurn: () -> Unit,
     onRegenerate: () -> Unit,
     onEdit: () -> Unit,
+    /** 点追问建议：和手动输入走同一条路 */
+    onFollowUp: (String) -> Unit = {},
     /** 当前是这一轮的第几版（1 起） */
     variantIndex: Int = 1,
     /** 这一轮一共几版 */
@@ -1884,7 +1890,7 @@ private fun TurnView(
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
                 Text(
-                    turn.question ?: (if (turn.orderIndex == 0) "（详细讲解本页内容）" else ""),
+                    questionBubble(turn),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -1976,6 +1982,16 @@ private fun TurnView(
                         Text("重新生成", style = MaterialTheme.typography.labelMedium)
                     }
                 }
+                // 追问建议与自测题跟着这一版回答走：换版就换一套，旧版的不会残留
+                val extra = remember(turn.extra) { parseTurnExtra(turn.extra) }
+                extra?.suggestions?.takeIf { it.isNotEmpty() }?.let { list ->
+                    Spacer(Modifier.height(4.dp))
+                    FollowUpSuggestions(list, onFollowUp)
+                }
+                extra?.quiz?.let { quiz ->
+                    Spacer(Modifier.height(10.dp))
+                    QuizCard(quiz)
+                }
             }
             turn.status == MarkerTurn.TURN_FAILED -> {
                 Text(
@@ -2018,9 +2034,135 @@ private fun UsageHint(turn: MarkerTurn) {
     )
 }
 
+/** 首轮存的是整段提示词（可能六行），气泡里只显示第一句；要看全文点「编辑」 */
+private fun questionBubble(turn: MarkerTurn): String {
+    val q = turn.question.orEmpty()
+    if (turn.orderIndex != 0) return q
+    return q.lineSequence().firstOrNull { it.isNotBlank() }?.take(60) ?: "（讲解这页内容）"
+}
+
+private val extraJson = Json { ignoreUnknownKeys = true }
+
+private fun parseTurnExtra(raw: String?): TurnExtra? {
+    if (raw.isNullOrBlank()) return null
+    return runCatching { extraJson.decodeFromString(TurnExtra.serializer(), raw) }.getOrNull()
+}
+
+/** AI 给的追问建议。点一下直接发出去——学生常常不是不想问，是不知道该问什么 */
 @Composable
-fun StatusChip(status: String) {
-    val extra = MaterialTheme.recordColors
+private fun FollowUpSuggestions(items: List<String>, onPick: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "还可以问",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+        items.forEach { q ->
+            Surface(
+                onClick = { onPick(q) },
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Text(
+                        "›",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(q, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 讲完随手一道单选题：从「AI 帮你讲」变成「AI 帮你确认真的懂了」。
+ * 选之前不透露答案，选完才判对错并给一句解析；同一轮只判一次，避免来回试点。
+ */
+@Composable
+private fun QuizCard(quiz: Quiz) {
+    var picked by rememberSaveable(quiz.question) { mutableStateOf<String?>(null) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                RoundedCornerShape(10.dp),
+            )
+            .padding(12.dp),
+    ) {
+        Text(
+            "检查一下是否理解了",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(quiz.question, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(8.dp))
+        quiz.options.forEach { opt ->
+            val letter = opt.trim().firstOrNull()?.uppercaseChar()?.toString().orEmpty()
+            val chosen = picked == letter
+            val isAnswer = letter == quiz.answer
+            val revealed = picked != null
+            val bg = when {
+                revealed && isAnswer -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                revealed && chosen -> MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                else -> Color.Transparent
+            }
+            Surface(
+                onClick = { if (picked == null) picked = letter },
+                shape = RoundedCornerShape(8.dp),
+                color = bg,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 8.dp, vertical = 7.dp)) {
+                    Text(
+                        opt,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when {
+                            revealed && isAnswer -> MaterialTheme.colorScheme.primary
+                            revealed && chosen -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                }
+            }
+        }
+        if (picked != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (picked == quiz.answer) "答对了" else "答案是 ${quiz.answer}",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (picked == quiz.answer) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
+            if (quiz.explain.isNotBlank()) {
+                Text(
+                    quiz.explain,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun StatusChip(status: String) {    val extra = MaterialTheme.recordColors
     val (label, fg, bg) = when (status) {
         Marker.AI_SUCCESS -> Triple("成功", extra.success, extra.successContainer)
         Marker.AI_FAILED -> Triple(
