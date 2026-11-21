@@ -1691,7 +1691,7 @@ private fun MarkerCard(
                                 editingTurnId = live.id
                                 editDraft = live.question.orEmpty()
                             },
-                            onFollowUp = onFollowUp,
+                            onPickSuggestion = { q -> followUpText = q },
                             variantIndex = liveIdx + 1,
                             variantTotal = versions.size,
                             onSelectVariant = { target ->
@@ -1868,8 +1868,8 @@ private fun TurnView(
     onStopTurn: () -> Unit,
     onRegenerate: () -> Unit,
     onEdit: () -> Unit,
-    /** 点追问建议：和手动输入走同一条路 */
-    onFollowUp: (String) -> Unit = {},
+    /** 点追问建议：填进输入框而不是直接发——误触一次就是一次真实计费 */
+    onPickSuggestion: (String) -> Unit = {},
     /** 当前是这一轮的第几版（1 起） */
     variantIndex: Int = 1,
     /** 这一轮一共几版 */
@@ -1955,7 +1955,12 @@ private fun TurnView(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("生成中…", style = MaterialTheme.typography.labelMedium)
+                    // 正文写完后要再花几秒产出追问和自测题，文字会停住；
+                    // 不换句话，用户会以为卡死了
+                    Text(
+                        if (streaming.enriching) "正文讲完了，正在整理追问与自测…" else "生成中…",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                     Spacer(Modifier.width(8.dp))
                     TextButton(onClick = onStopTurn) {
                         Icon(Icons.Filled.Stop, contentDescription = null, Modifier.size(14.dp))
@@ -1986,7 +1991,7 @@ private fun TurnView(
                 val extra = remember(turn.extra) { parseTurnExtra(turn.extra) }
                 extra?.suggestions?.takeIf { it.isNotEmpty() }?.let { list ->
                     Spacer(Modifier.height(4.dp))
-                    FollowUpSuggestions(list, onFollowUp)
+                    FollowUpSuggestions(list, onPickSuggestion)
                 }
                 extra?.quiz?.let { quiz ->
                     Spacer(Modifier.height(10.dp))
@@ -2048,12 +2053,12 @@ private fun parseTurnExtra(raw: String?): TurnExtra? {
     return runCatching { extraJson.decodeFromString(TurnExtra.serializer(), raw) }.getOrNull()
 }
 
-/** AI 给的追问建议。点一下直接发出去——学生常常不是不想问，是不知道该问什么 */
+/** AI 给的追问建议。点一下填进输入框，可改完再发——学生常常不是不想问，是不知道该问什么 */
 @Composable
 private fun FollowUpSuggestions(items: List<String>, onPick: (String) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
         Text(
-            "还可以问",
+            "继续追问 · 点一下填进输入框",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

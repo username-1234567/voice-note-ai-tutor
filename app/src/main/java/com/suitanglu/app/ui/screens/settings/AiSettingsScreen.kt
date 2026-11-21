@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.suitanglu.app.ai.AiPrompts
 import com.suitanglu.app.data.AiConfig
 import com.suitanglu.app.ui.components.BottomActionRow
 import com.suitanglu.app.ui.components.SecondaryPage
@@ -317,6 +319,13 @@ fun AiSettingsScreen(onBack: () -> Unit) {
                 supportingText = { Text("每次讲解都会带上；课程名、拍摄时间和备注由应用自动补充，不用写在这里") },
                 modifier = Modifier.fillMaxWidth(), minLines = 3,
             )
+            // 默认提示词现在是一整段结构化任务，改坏了没法凭记忆敲回来
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(
+                    onClick = { prompt = AiPrompts.DEFAULT_TASK },
+                    enabled = prompt.trim() != AiPrompts.DEFAULT_TASK.trim(),
+                ) { Text("恢复默认提示词", style = MaterialTheme.typography.labelMedium) }
+            }
         }
 
         Text(

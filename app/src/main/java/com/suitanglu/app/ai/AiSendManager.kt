@@ -28,7 +28,13 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** 流式输出实时状态（供 UI 直接展示正在生成的回复） */
-data class StreamingState(val markerId: Long, val turnId: Long, val text: String)
+data class StreamingState(
+    val markerId: Long,
+    val turnId: Long,
+    val text: String,
+    /** 正文已经写完、正在吐追问建议和自测题——此时 text 不再增长，界面要说清楚在等什么 */
+    val enriching: Boolean = false,
+)
 
 class AiSendManager(
     private val context: Context,
@@ -339,8 +345,15 @@ class AiSendManager(
                 if (t - lastFlush > 300) {
                     lastFlush = t
                     // 附加块不进正文：模型一开始输出 <<<FOLLOWUPS>>>，屏幕上的字就该停住，
-                    // 否则用户会眼看着一行标记冒出来再被抹掉
-                    _streaming.value = StreamingState(marker.id, turn.id, AiPrompts.visibleStream(buffer.toString()))
+                    // 否则用户会眼看着一行标记冒出来再被抹掉。
+                    // 同时告诉界面「正文写完了，正在补追问和自测」，免得看起来像卡死
+                    val raw = buffer.toString()
+                    _streaming.value = StreamingState(
+                        marker.id,
+                        turn.id,
+                        AiPrompts.visibleStream(raw),
+                        enriching = raw.contains(AiPrompts.SUGGEST_OPEN),
+                    )
                 }
             }
             _streaming.value = null
@@ -380,7 +393,7 @@ class AiSendManager(
                 val t = System.currentTimeMillis()
                 if (partial.isNotEmpty()) {
                     // 停止时也可能已经写出半个附加块，同样要切掉，否则正文尾巴上挂着标记
-                    val parsed = AiPrompts.splitExtras(partial)
+                    val parsed = AiPrompts.splitExtras(AiPrompts.visibleStream(partial))
                     db.markerTurnDao().update(
                         current.copy(
                             status = MarkerTurn.TURN_SUCCESS,
@@ -519,7 +532,13 @@ class AiSendManager(
                     val t = System.currentTimeMillis()
                     if (t - lastFlush > 300) {
                         lastFlush = t
-                        _streaming.value = StreamingState(head.id, turnId, AiPrompts.visibleStream(buffer.toString()))
+                        val raw = buffer.toString()
+                        _streaming.value = StreamingState(
+                            head.id,
+                            turnId,
+                            AiPrompts.visibleStream(raw),
+                            enriching = raw.contains(AiPrompts.SUGGEST_OPEN),
+                        )
                     }
                 }
                 _streaming.value = null
