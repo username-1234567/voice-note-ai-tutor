@@ -27,7 +27,12 @@ import org.json.JSONObject
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun MarkdownView(text: String, modifier: Modifier = Modifier) {
+fun MarkdownView(
+    text: String,
+    modifier: Modifier = Modifier,
+    /** 按二级标题分节折叠。只在最终回答上开：流式内容还在长，折了会不停跳 */
+    fold: Boolean = false,
+) {
     val context = LocalContext.current
     val dark = isSystemInDarkTheme()
     var contentHeightDp by remember { mutableFloatStateOf(80f) }
@@ -43,9 +48,9 @@ fun MarkdownView(text: String, modifier: Modifier = Modifier) {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
                     state.pageReady = true
-                    state.pending?.let { pending ->
+                    state.pending?.let { p ->
                         view.evaluateJavascript(
-                            "window.render(${JSONObject.quote(pending.first)}, ${pending.second})", null,
+                            "window.render(${JSONObject.quote(p.text)}, ${p.dark}, ${p.fold})", null,
                         )
                     }
                 }
@@ -74,12 +79,12 @@ fun MarkdownView(text: String, modifier: Modifier = Modifier) {
         update = { wv ->
             // 只在文本/主题真的变了才重渲染：update 每次重组都会跑，
             // 无条件调用等于整块内容反复重建，看着闪
-            val next = text to dark
+            val next = RenderState.Pending(text, dark, fold)
             if (state.pending != next) {
                 state.pending = next
                 if (state.pageReady) {
                     wv.evaluateJavascript(
-                        "window.render(${JSONObject.quote(text)}, $dark)", null,
+                        "window.render(${JSONObject.quote(text)}, $dark, $fold)", null,
                     )
                 }
             }
@@ -89,6 +94,8 @@ fun MarkdownView(text: String, modifier: Modifier = Modifier) {
 
 /** 记录页面就绪状态与最近一次待渲染内容（跨回调传递） */
 private class RenderState {
+    data class Pending(val text: String, val dark: Boolean, val fold: Boolean)
+
     var pageReady: Boolean = false
-    var pending: Pair<String, Boolean>? = null
+    var pending: Pending? = null
 }

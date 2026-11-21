@@ -1693,6 +1693,8 @@ private fun MarkerCard(
                                 editDraft = live.question.orEmpty()
                             },
                             onPickSuggestion = { q -> followUpText = q },
+                            canMarkReviewed = marker.needsReview,
+                            onMarkReviewed = { if (marker.needsReview) onToggleReview() },
                             variantIndex = liveIdx + 1,
                             variantTotal = versions.size,
                             onSelectVariant = { target ->
@@ -1871,6 +1873,9 @@ private fun TurnView(
     onEdit: () -> Unit,
     /** 点追问建议：填进输入框而不是直接发——误触一次就是一次真实计费 */
     onPickSuggestion: (String) -> Unit = {},
+    /** 答对自测后可以顺手取消「待复习」；这条标记本身不在待复习时就不显示这个按钮 */
+    canMarkReviewed: Boolean = false,
+    onMarkReviewed: () -> Unit = {},
     /** 当前是这一轮的第几版（1 起） */
     variantIndex: Int = 1,
     /** 这一轮一共几版 */
@@ -1981,7 +1986,8 @@ private fun TurnView(
                 }
             }
             turn.status == MarkerTurn.TURN_SUCCESS -> {
-                MarkdownView(text = turn.answer.orEmpty())
+                // 最终回答按二级标题分节折叠：手机上先看结论，推导按需展开
+                MarkdownView(text = turn.answer.orEmpty(), fold = true)
                 Spacer(Modifier.height(2.dp))
                 UsageHint(turn)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1999,7 +2005,7 @@ private fun TurnView(
                 }
                 extra?.quiz?.let { quiz ->
                     Spacer(Modifier.height(10.dp))
-                    QuizCard(quiz)
+                    QuizCard(quiz, canMarkReviewed, onMarkReviewed)
                 }
             }
             turn.status == MarkerTurn.TURN_FAILED -> {
@@ -2165,7 +2171,11 @@ private fun FollowUpSuggestions(items: List<String>, onPick: (String) -> Unit) {
  * 选之前不透露答案，选完才判对错并给一句解析；同一轮只判一次，避免来回试点。
  */
 @Composable
-private fun QuizCard(quiz: Quiz) {
+private fun QuizCard(
+    quiz: Quiz,
+    canMarkReviewed: Boolean = false,
+    onMarkReviewed: () -> Unit = {},
+) {
     var picked by rememberSaveable(quiz.question) { mutableStateOf<String?>(null) }
     Column(
         Modifier
@@ -2232,6 +2242,15 @@ private fun QuizCard(quiz: Quiz) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            // 答对不等于掌握了，所以不自动消星；但给一个一步到位的入口，
+            // 否则"自测"和"待复习"永远是两套互不相干的机制
+            if (picked == quiz.answer && canMarkReviewed) {
+                TextButton(onClick = onMarkReviewed) {
+                    Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("标记为已复习", style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
     }

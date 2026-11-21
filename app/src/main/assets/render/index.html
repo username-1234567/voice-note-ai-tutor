@@ -46,6 +46,14 @@
   .katex { font-size: 1.05em; }
   .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; margin: 0.5em 0; }
   .math-fallback { background: rgba(127,127,127,0.16); border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+  /* 分节折叠：长讲解先看到结论，推导按需展开 */
+  h2.fold-head { cursor: pointer; position: relative; padding-right: 20px; }
+  h2.fold-head::after {
+    content: '⌄'; position: absolute; right: 2px; top: -0.05em;
+    opacity: 0.4; font-size: 0.9em; transition: transform 0.15s ease;
+  }
+  h2.fold-head.is-collapsed::after { transform: rotate(-90deg); }
+  .fold-body.is-collapsed { display: none; }
 </style>
 </head>
 <body class="light">
@@ -89,18 +97,57 @@ function restoreMath(html, math) {
   }).join('');
 }
 
-function render(text, dark) {
+function render(text, dark, fold) {
   document.body.className = dark ? 'dark' : 'light';
   var ex = extractMath(text);
   var html = md.render(ex.text);
   html = restoreMath(html, ex.math);
-  document.getElementById('content').innerHTML = html;
+  var content = document.getElementById('content');
+  content.innerHTML = html;
+  if (fold) foldSections(content);
   reportHeight();
   // 公式字体、图片都是异步撑开的：首帧量到的高度会偏小，
   // 只报这一次的话 WebView 就停在那个高度上，回答下半截直接被裁掉
   requestAnimationFrame(reportHeight);
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(reportHeight).catch(function () {});
+  }
+}
+
+/**
+ * 把相邻两个 h2 之间的内容包成可折叠的一节。
+ *
+ * 只在最终回答上启用：流式渲染时文字还在长，中途折叠会让内容不断跳走。
+ * 前两节默认展开（通常是"这页在讲什么"和"核心概念"），后面的推导按需点开。
+ */
+function foldSections(root) {
+  var heads = root.querySelectorAll('h2');
+  if (heads.length < 3) return;
+  for (var i = 0; i < heads.length; i++) {
+    var h = heads[i];
+    var body = document.createElement('div');
+    body.className = 'fold-body';
+    var node = h.nextElementSibling;
+    while (node && node.tagName !== 'H2') {
+      var next = node.nextElementSibling;
+      body.appendChild(node);
+      node = next;
+    }
+    if (!body.firstChild) continue;
+    h.parentNode.insertBefore(body, h.nextSibling);
+    h.classList.add('fold-head');
+    if (i >= 2) {
+      body.classList.add('is-collapsed');
+      h.classList.add('is-collapsed');
+    }
+    (function (head, target) {
+      head.addEventListener('click', function () {
+        target.classList.toggle('is-collapsed');
+        head.classList.toggle('is-collapsed');
+        // 收起/展开会改高度，主动报一次，别等 ResizeObserver 的下一帧
+        reportHeight();
+      });
+    })(h, body);
   }
 }
 window.render = render;
